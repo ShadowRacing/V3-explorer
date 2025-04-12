@@ -606,11 +606,14 @@ class ModernExplorer(QMainWindow):
     
 
     def _get_default_start_path(self):
-        """Get the default starting path based on platform."""
+        home = os.path.expanduser("~")
+        if os.path.exists(home) and os.path.isdir(home):
+            return home
+        # Fallback to a directory that should exist
         if platform.system() == "Windows":
-            return os.path.expanduser("~")  # User's home directory
+            return "C:\\"
         else:
-            return os.path.expanduser("~")  # User's home directory on Unix
+            return "/"
     
     def _create_file_model(self):
         """Create and configure the file model.
@@ -1204,10 +1207,14 @@ class ModernExplorer(QMainWindow):
         if self.is_searching:
             self.clear_search()
             
-        # Handle root drive paths more carefully
-        if platform.system() == "Windows" and len(path) <= 3 and path.endswith(":"): 
-            # Add trailing slash for Windows drive letters
-            path = path + "\\"
+        # Check more robustly to more paths and drive letters
+        if platform.system() == "Windows":
+            # Handle drive letter format (C:)
+            if len(path) == 2 and path[1] == ':':
+                path = path + "\\"
+            # For paths longer than 2 characters, check for drive letter and slash
+            elif len(path) >= 3 and path[1] == ':' and (path[2] == '/' or path[2] == '\\'):
+                path = path[0:2] + "\\"
             
         # Verify path exists and is a directory
         if not os.path.exists(path) or not os.path.isdir(path):
