@@ -68,6 +68,20 @@ class ThemeManager(QObject):
             self.settings.setValue("theme", theme_name)
             self.theme_changed.emit(theme_name)
     
+    def is_dark(self, theme_name=None):
+        """Whether a theme has a dark background.
+        
+        Args:
+            theme_name: Name of the theme. If None, uses current theme.
+        """
+        theme_name = theme_name or self.current_theme
+        if theme_name == "light":
+            return False
+        if theme_name == "system":
+            app = QGuiApplication.instance()
+            return app is None or app.styleHints().colorScheme() != Qt.ColorScheme.Light
+        return True
+    
     def _get_system_theme(self):
         """Determine system theme (light or dark) and return the appropriate stylesheet.
         
