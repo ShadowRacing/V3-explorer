@@ -12,6 +12,7 @@ from datetime import datetime
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from shadows_explorer.core.query import find_in_file, parse_query
 from shadows_explorer.core.utils import is_within
 
 TYPE_EXTENSIONS = {
@@ -33,9 +34,11 @@ class SearchResult:
         size: File size in bytes
         last_modified: Last modified date
         search_id: ID of the search that produced this result
+        snippet: The matching line, for content searches
     """
 
-    def __init__(self, filename, filepath, directory, is_dir=False, size=None, mtime=None, search_id=0):
+    def __init__(self, filename, filepath, directory, is_dir=False, size=None, mtime=None, search_id=0,
+                 snippet=""):
         """Initialize a search result.
 
         Args:
@@ -52,6 +55,7 @@ class SearchResult:
         self.directory = directory
         self.is_directory = is_dir
         self.search_id = search_id
+        self.snippet = snippet
 
         if size is None or mtime is None:
             try:
@@ -157,6 +161,7 @@ class FileSearcher(QObject):
         super().__init__(parent)
         self.search_locations = []
         self.search_term = ""
+        self.query = parse_query("")
         self.search_options = {}
         self.search_id = 0
         self.total_files_scanned = 0
@@ -177,16 +182,22 @@ class FileSearcher(QObject):
 
         Args:
             locations: List of directories to search
-            term: Search term
-            options: Dictionary of search options
+            term: Search query (words and filters, see core/query.py)
+            options: Dictionary of search options (from the Advanced Search dialog)
 
         Returns:
             self: For method chaining
+
+        Raises:
+            QueryError: The query has a filter that can't be understood
         """
         locations = locations if isinstance(locations, list) else [locations]
+        self.query = parse_query(term)
         self.search_locations = remove_nested_locations(locations)
         self.search_term = term.lower()
         self.search_options = options or {}
+        if self.search_options.get('content'):
+            self.query.content = self.search_options['content'].lower()
         return self
 
     def start_search(self):
@@ -195,7 +206,7 @@ class FileSearcher(QObject):
         Returns:
             bool: True if search started successfully
         """
-        if not self.search_term or not self.search_locations:
+        if self.query.is_empty() or not self.search_locations:
             self.status_update.emit("Nothing to search for")
             return False
 
@@ -212,7 +223,7 @@ class FileSearcher(QObject):
         thread = threading.Thread(
             target=self._run,
             args=(self.search_id, self._cancel_event, list(self.search_locations),
-                  self.search_term, dict(self.search_options)),
+                  self.query, dict(self.search_options)),
             daemon=True,
         )
         thread.start()
@@ -224,7 +235,7 @@ class FileSearcher(QObject):
             self._cancel_event.set()
             self.status_update.emit("Search stopped")
 
-    def _run(self, search_id, cancel, locations, term, options):
+    def _run(self, search_id, cancel, locations, query, options):
         """Coordinate the search: fan top-level folders out to a thread pool."""
         recursive = options.get('include_subfolders', True)
         try:
@@ -237,10 +248,10 @@ class FileSearcher(QObject):
                     if not os.path.isdir(location):
                         self.status_update.emit(f"Location not found: {location}")
                         continue
-                    subdirs = self._scan_directory(location, search_id, cancel, term, options)
+                    subdirs = self._scan_directory(location, search_id, cancel, query, options)
                     if recursive:
                         futures.extend(
-                            pool.submit(self._scan_tree, d, search_id, cancel, term, options)
+                            pool.submit(self._scan_tree, d, search_id, cancel, query, options)
                             for d in subdirs
                         )
                 for future in futures:
@@ -259,13 +270,13 @@ class FileSearcher(QObject):
             self.progress.emit(self.total_files_scanned, -1)
             self.finished.emit(search_id)
 
-    def _scan_tree(self, top, search_id, cancel, term, options):
+    def _scan_tree(self, top, search_id, cancel, query, options):
         """Search a directory tree without following symlinked folders."""
         stack = [top]
         while stack and not cancel.is_set():
-            stack.extend(self._scan_directory(stack.pop(), search_id, cancel, term, options))
+            stack.extend(self._scan_directory(stack.pop(), search_id, cancel, query, options))
 
-    def _scan_directory(self, directory, search_id, cancel, term, options):
+    def _scan_directory(self, directory, search_id, cancel, query, options):
         """Search one directory's entries.
 
         Returns:
@@ -287,13 +298,13 @@ class FileSearcher(QObject):
                 continue
             if is_dir and not entry.name.startswith('.'):
                 subdirs.append(entry.path)
-            if term in entry.name.lower():
-                self._check_match(entry, is_dir, directory, search_id, options)
+            if query.matches_name(entry.name):
+                self._check_match(entry, is_dir, directory, search_id, query, options)
 
         self._report_progress(len(entries))
         return subdirs
 
-    def _check_match(self, entry, is_dir, directory, search_id, options):
+    def _check_match(self, entry, is_dir, directory, search_id, query, options):
         """Apply filters to a name match and emit it as a result."""
         try:
             stats = entry.stat()
@@ -302,10 +313,18 @@ class FileSearcher(QObject):
             return
         if not passes_filters(entry.name, is_dir, size, mtime, options):
             return
+        if not query.matches(entry.name, is_dir, size, mtime):
+            return
+        snippet = ""
+        if query.content:
+            # Reading the file is the slow part, so it comes after every other check
+            snippet = find_in_file(entry.path, query.content)
+            if snippet is None:
+                return
         with self.lock:
             self.result_count += 1
         self.found_item.emit(SearchResult(entry.name, entry.path, directory, is_dir,
-                                          size, mtime, search_id))
+                                          size, mtime, search_id, snippet))
 
     def _report_progress(self, scanned):
         """Add to the scanned counter and emit a throttled progress signal."""

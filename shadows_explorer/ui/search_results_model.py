@@ -59,5 +59,8 @@ class SearchResultsModel(QStandardItemModel):
 
         for item in (name_item, location_item, size_item, date_item):
             item.setEditable(False)
+            if getattr(result, "snippet", ""):
+                # Content searches show the matching line on hover
+                item.setToolTip(f"{result.filepath}\n\u201c{result.snippet}\u201d")
 
         self.appendRow([name_item, location_item, size_item, date_item])

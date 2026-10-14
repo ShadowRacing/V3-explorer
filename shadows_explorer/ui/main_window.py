@@ -48,6 +48,8 @@ from shadows_explorer.ui.breadcrumb_bar import FixedBreadcrumbBar
 from shadows_explorer.ui.drives_view import DrivesView
 from shadows_explorer.ui.preview_pane import PreviewPane
 from shadows_explorer.core.search import FileSearcher
+from shadows_explorer.core.query import QueryError, parse_query
+from shadows_explorer.ui.search_box import SEARCH_HELP, QueryCompleter
 from shadows_explorer.ui.search_results_model import SearchResultsModel, PATH_ROLE
 from shadows_explorer.ui.dialogs.settings import SettingsDialog
 from shadows_explorer.ui.dialogs.properties import PropertiesDialog
@@ -322,9 +324,10 @@ class ModernExplorer(QMainWindow):
 
         # Search box with a search icon inside it
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search  (Ctrl+F)")
-        self.search_box.setToolTip("Search in current location, or use 'AllDrives:' prefix to search all drives")
-        self.search_box.setFixedWidth(240)
+        self.search_box.setPlaceholderText("Search  (Ctrl+F)  e.g. kind:image size:>1MB")
+        self.search_box.setToolTip(SEARCH_HELP)
+        self.search_box.setFixedWidth(280)
+        self.search_box.setCompleter(QueryCompleter(self.search_box))
         self.search_box.returnPressed.connect(self.search_files)
         search_action = self.search_box.addAction(ui_icon("search", self.icon_color),
                                                   QLineEdit.ActionPosition.LeadingPosition)
@@ -442,6 +445,7 @@ class ModernExplorer(QMainWindow):
         self.navigation_panel.item_clicked.connect(self.handle_navigation_item)
         self.navigation_panel.files_dropped.connect(self.transfer_files)
         self.navigation_panel.open_in_new_tab.connect(self.new_tab)
+        self.navigation_panel.saved_search_clicked.connect(self.run_saved_search)
 
         # Scrollable, so long favorites and drive lists still fit
         sidebar_scroll = QScrollArea()
@@ -529,16 +533,22 @@ class ModernExplorer(QMainWindow):
 
         self.search_progress = QProgressBar()
         self.search_progress.setTextVisible(False)
-        self.search_progress.setFixedWidth(120)
+        self.search_progress.setFixedWidth(80)
 
         self.search_status_label = QLabel("")
         self.search_status_label.setObjectName("status_label")
+        self.search_status_label.setMinimumWidth(190)
 
         self.stop_search_button = QPushButton("Stop")
         self.stop_search_button.clicked.connect(self.stop_search)
 
+        self.save_search_button = QPushButton("Save Search")
+        self.save_search_button.setToolTip("Keep this search in the sidebar to run it again later")
+        self.save_search_button.clicked.connect(self.save_current_search)
+
         search_status_layout.addWidget(self.search_progress)
         search_status_layout.addWidget(self.search_status_label, 1)
+        search_status_layout.addWidget(self.save_search_button)
         search_status_layout.addWidget(self.stop_search_button)
 
         view_layout.addWidget(self.search_status_widget)
@@ -785,6 +795,7 @@ class ModernExplorer(QMainWindow):
             C("Properties", self.show_selected_properties, "Alt+Enter", bool(selection or folder)),
             C("Search Files", self._focus_search, "Ctrl+F"),
             C("Advanced Search", self.show_advanced_search),
+            C("Save Search", self.save_current_search, "", self.is_searching),
             C("Filter This Folder", self._focus_filter, "Ctrl+E", in_files),
             C("Analyze Disk Usage", lambda: self.show_disk_usage(selection[0] if single_dir else folder), "",
               bool(single_dir or folder)),
@@ -811,6 +822,8 @@ class ModernExplorer(QMainWindow):
                      for name in ("dark", "light", "retro", "system")]
         commands += [C(f"Go to Favorite: {os.path.basename(os.path.normpath(f)) or f}",
                        lambda f=f: self.navigate_to(f)) for f in self.navigation_panel.favorites]
+        commands += [C(f"Saved Search: {search['name']}", lambda s=search: self.run_saved_search(s))
+                     for search in self.navigation_panel.saved_searches.items]
         return commands
 
     def _focus_search(self):
@@ -2624,7 +2637,12 @@ class ModernExplorer(QMainWindow):
 
         term_edit = QLineEdit(self.search_box.text())
         term_edit.setPlaceholderText("File name contains...")
+        term_edit.setToolTip(SEARCH_HELP)
         layout.addWidget(term_edit)
+
+        content_edit = QLineEdit((self.search_options or {}).get('content', ""))
+        content_edit.setPlaceholderText("Containing text (searches inside text files; slower)")
+        layout.addWidget(content_edit)
 
         # Date modified group
         date_group = QGroupBox("Date Modified")
@@ -2724,7 +2742,8 @@ class ModernExplorer(QMainWindow):
             return
 
         unit_bytes = {"KB": 1024, "MB": 1024 ** 2, "GB": 1024 ** 3}
-        options = {'include_subfolders': include_subfolders.isChecked()}
+        options = {'include_subfolders': include_subfolders.isChecked(),
+                   'content': content_edit.text().strip()}
 
         if date_after.isChecked():
             options['date_filter'] = ('after', date_after_edit.date().toPyDate())
@@ -2744,13 +2763,14 @@ class ModernExplorer(QMainWindow):
         self.search_options = options
 
         self.search_box.setText(term_edit.text())
-        if self.search_box.text().strip():
+        if self.search_box.text().strip() or options['content']:
             self.search_files()
 
     def search_files(self):
         """Performs a search for files matching the search term."""
         search_term = self.search_box.text().strip()
-        if not search_term:
+        content = (self.search_options or {}).get('content')
+        if not search_term and not content:
             self.clear_search()
             return
 
@@ -2758,8 +2778,13 @@ class ModernExplorer(QMainWindow):
         all_drives = search_term.lower().startswith("alldrives:")
         if all_drives:
             search_term = search_term[len("alldrives:"):].strip()
-            if not search_term:
+            if not search_term and not content:
                 return
+        try:
+            parse_query(search_term)
+        except QueryError as error:
+            QMessageBox.warning(self, "Search", str(error))
+            return
         all_drives = all_drives or self.current_view == "drives" or (
             self.current_view == "search" and self.search_scope_all_drives)
 
@@ -2793,7 +2818,9 @@ class ModernExplorer(QMainWindow):
         options_text = ""
         if self.search_options and not self.search_options.get('include_subfolders', True):
             options_text = " (current folder only)"
-        self.status_label.setText(f"Searching for '{search_term}' in {scope}{options_text}")
+        if content:
+            options_text += f" containing \"{content}\""
+        self.status_label.setText(f"Searching for '{search_term or '*'}' in {scope}{options_text}")
 
     def _finish_search_ui(self, message):
         """Stop the progress indicator and show a final message."""
@@ -2882,3 +2909,38 @@ class ModernExplorer(QMainWindow):
         elapsed = self._format_elapsed(time.time() - self.search_start_time)
         self._finish_search_ui(f"Found {count} items in {elapsed}")
         self.status_label.setText(f"Search complete: {count} items found, {self.search_scanned:,} scanned")
+
+    def save_current_search(self):
+        """Save the running or finished search to the sidebar."""
+        if not self.is_searching:
+            return
+        query = self.search_box.text().strip()
+        if query.lower().startswith("alldrives:"):
+            query = query[len("alldrives:"):].strip()
+        content = (self.search_options or {}).get('content')
+        if content and "content:" not in query.lower():
+            query = f'{query} content:"{content}"'.strip()
+        location = "" if self.search_scope_all_drives else self.current_path
+        name, ok = QInputDialog.getText(self, "Save Search", "Name for this search:", text=query)
+        name = name.strip()
+        if not ok or not name:
+            return
+        if self.navigation_panel.saved_searches.get(name) is not None:
+            answer = QMessageBox.question(self, "Save Search", f"Replace the saved search \"{name}\"?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self.navigation_panel.save_search(name, query, location)
+        self.status_label.setText(f"Saved search \"{name}\" to the sidebar")
+
+    def run_saved_search(self, search):
+        """Run a search saved in the sidebar, in the folder it was saved for."""
+        location = search.get("location", "")
+        if location and not os.path.isdir(location):
+            QMessageBox.warning(self, "Saved Search", f"The folder for \"{search['name']}\" no longer exists:\n"
+                                                      f"{location}")
+            return
+        if location:
+            self.navigate_to(location)
+        self.search_options = None  # A saved search carries its own filters
+        self.search_box.setText(search["query"] if location else f"alldrives: {search['query']}")
+        self.search_files()
