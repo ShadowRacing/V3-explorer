@@ -1,4 +1,4 @@
-from preview_pane import MAX_TEXT_CHARS, highlight_code, looks_binary, read_text
+from shadows_explorer.ui.preview_pane import MAX_TEXT_CHARS, highlight_code, looks_binary, read_text
 
 
 def test_read_text_truncates(tmp_path):

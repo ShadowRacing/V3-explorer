@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from bulk_rename import RenameOptions, execute_renames, find_problems, new_name_for, plan_renames
+from shadows_explorer.core.bulk_rename import RenameOptions, execute_renames, find_problems, new_name_for, plan_renames
 
 
 def test_find_replace_keeps_extension():

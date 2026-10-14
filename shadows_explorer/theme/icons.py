@@ -15,6 +15,8 @@ from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import QFileIconProvider
 
+from shadows_explorer.core.file_types import file_kind
+
 ICON_SIZES = (16, 20, 24, 32, 48, 64, 96, 128)
 
 # 24x24 line icons; {c} is replaced with the stroke color
@@ -100,29 +102,6 @@ _FOLDER = ('<path d="M2.5 6.5a1.5 1.5 0 0 1 1.5-1.5h5l2 2h9a1.5 1.5 0 0 1 1.5 1.
            '<path d="M2.5 9.5h19v9a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z" fill="#f5b83d"/>')
 _FOLDER_LINK = _FOLDER + '<path d="M13 16.5l4-4M14 12.5h3v3" fill="none" stroke="#7a4b00" stroke-width="1.4" ' \
                          'stroke-linecap="round" stroke-linejoin="round"/>'
-
-EXTENSION_KINDS = {}
-for _kind, _extensions in {
-    "text": ".txt .log .ini .cfg .conf .md .rtf .csv .tsv .doc .docx .odt",
-    "code": ".py .pyw .js .ts .jsx .tsx .html .htm .css .scss .json .xml .yaml .yml .toml .c .h .cpp .hpp "
-            ".cs .java .kt .rs .go .rb .php .sql .lua .swift .sh .bat .cmd .ps1",
-    "image": ".jpg .jpeg .png .gif .bmp .webp .svg .ico .tif .tiff .heic",
-    "video": ".mp4 .avi .mov .wmv .mkv .flv .webm .m4v",
-    "audio": ".mp3 .wav .flac .aac .ogg .wma .m4a",
-    "archive": ".zip .rar .7z .tar .gz .bz2 .xz .tgz",
-    "pdf": ".pdf",
-    "spreadsheet": ".xls .xlsx .ods",
-    "presentation": ".ppt .pptx .odp",
-    "executable": ".exe .msi .com .dll .app .apk .appimage .deb .rpm",
-}.items():
-    for _ext in _extensions.split():
-        EXTENSION_KINDS[_ext] = _kind
-
-
-def file_kind(path):
-    """Category of a file for its icon, from the extension ("file" if unknown)."""
-    return EXTENSION_KINDS.get(os.path.splitext(path)[1].lower(), "file")
-
 
 def _svg_document(body, view_box="0 0 24 24"):
     return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}">{body}</svg>'

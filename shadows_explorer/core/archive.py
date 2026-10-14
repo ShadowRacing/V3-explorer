@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 import zipfile
 
-from utils import is_within, unique_target_path
+from shadows_explorer.core.utils import is_within, unique_target_path
 
 TAR_SUFFIXES = (".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")
 ARCHIVE_SUFFIXES = (".zip",) + TAR_SUFFIXES

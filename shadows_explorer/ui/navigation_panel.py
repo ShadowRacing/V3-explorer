@@ -10,9 +10,9 @@ import platform
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu
 from PyQt6.QtCore import pyqtSignal, Qt, QStorageInfo, QSettings
 
-from file_views import local_paths_from_mime, should_move
-from icons import ui_icon
-from utils import normalize_path, paths_equal
+from shadows_explorer.ui.file_views import local_paths_from_mime, should_move
+from shadows_explorer.theme.icons import ui_icon
+from shadows_explorer.core.utils import normalize_path, paths_equal
 
 
 def drive_item_id(path):

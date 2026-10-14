@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLi
                             QLabel, QPushButton, QGroupBox, QAbstractItemView)
 from PyQt6.QtGui import QColor
 
-from bulk_rename import CASE_MODES, RenameOptions, find_problems, plan_renames
+from shadows_explorer.core.bulk_rename import CASE_MODES, RenameOptions, find_problems, plan_renames
 
 
 class BulkRenameDialog(QDialog):

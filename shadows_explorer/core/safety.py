@@ -9,7 +9,7 @@ import tempfile
 
 from PyQt6.QtCore import QFile
 
-from utils import IS_WINDOWS, is_within
+from shadows_explorer.core.utils import IS_WINDOWS, is_within
 
 
 class FileOperationSafetyManager:

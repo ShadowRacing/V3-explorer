@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                             QGridLayout)
 from PyQt6.QtCore import pyqtSignal, Qt, QStorageInfo
 
-from icons import ui_icon
-from utils import format_size
+from shadows_explorer.theme.icons import ui_icon
+from shadows_explorer.core.utils import format_size
 
 
 class DriveInfo:

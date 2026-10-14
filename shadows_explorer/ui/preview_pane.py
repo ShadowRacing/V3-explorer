@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtGui import QPixmap, QImageReader, QFont, QFontDatabase
 from PyQt6.QtCore import Qt, QFileInfo, QSize, pyqtSignal
 
-from icons import FileIconProvider, ui_icon
-from utils import format_size
+from shadows_explorer.theme.icons import FileIconProvider, ui_icon
+from shadows_explorer.core.utils import format_size
 
 try:
     from PyQt6.QtPdf import QPdfDocument

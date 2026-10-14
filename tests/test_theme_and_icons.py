@@ -1,7 +1,8 @@
 import pytest
 
-from icons import EXTENSION_KINDS, FILE_TYPE_COLORS, UI_ICONS, file_kind, file_type_icon, ui_icon
-from theme_manager import PALETTES, STYLESHEET
+from shadows_explorer.core.file_types import EXTENSION_KINDS, file_kind
+from shadows_explorer.theme.icons import FILE_TYPE_COLORS, UI_ICONS, file_type_icon, ui_icon
+from shadows_explorer.theme.theme_manager import PALETTES, STYLESHEET
 
 
 @pytest.mark.parametrize("name", sorted(PALETTES))

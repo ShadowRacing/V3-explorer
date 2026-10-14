@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 
-from utils import is_valid_filename, paths_equal
+from shadows_explorer.core.utils import is_valid_filename, paths_equal
 from PyQt6.QtGui import QColor, QFileSystemModel, QIcon, QImage, QImageReader, QPainter, QPixmap
 
 THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg"}

@@ -1,6 +1,6 @@
 import os
 
-from file_operation_safety_manager import FileOperationSafetyManager
+from shadows_explorer.core.safety import FileOperationSafetyManager
 
 
 def test_protected_location_is_not_prefix_match(tmp_path):

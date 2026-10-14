@@ -9,7 +9,7 @@ import json
 import os
 import time
 
-from utils import paths_equal
+from shadows_explorer.core.utils import paths_equal
 
 MAX_FILES = 40
 MAX_FOLDERS = 20

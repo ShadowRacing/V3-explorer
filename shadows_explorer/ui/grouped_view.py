@@ -11,9 +11,9 @@ from PyQt6.QtWidgets import QAbstractItemView, QTreeView
 from PyQt6.QtGui import QFont, QStandardItem, QStandardItemModel
 from PyQt6.QtCore import QSize, Qt
 
-from icons import file_icon_for_path
-from search_results_model import PATH_ROLE
-from utils import format_size
+from shadows_explorer.theme.icons import file_icon_for_path
+from shadows_explorer.ui.search_results_model import PATH_ROLE
+from shadows_explorer.core.utils import format_size
 
 HEADERS = ["Name", "Date Modified", "Type", "Size"]
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 2  # Group name on header rows
