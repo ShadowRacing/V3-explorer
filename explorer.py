@@ -121,6 +121,8 @@ class ModernExplorer(QMainWindow):
 
         # Models
         self.file_model = self._create_file_model()
+        self.file_model.fileRenamed.connect(self._on_renamed_in_place)
+        self.file_model.rename_failed.connect(self._on_rename_failed)
         self.search_results_model = SearchResultsModel(self)
 
         # Search state
@@ -368,7 +370,8 @@ class ModernExplorer(QMainWindow):
         """Apply settings shared by the icon/list view and the details view."""
         view.setModel(self.file_model)
         view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # Rename in place by clicking a selected item again (F2 is a window shortcut)
+        view.setEditTriggers(QAbstractItemView.EditTrigger.SelectedClicked)
         view.activated.connect(self.file_view_activated)
         view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         view.customContextMenuRequested.connect(self.show_context_menu)
@@ -534,6 +537,10 @@ class ModernExplorer(QMainWindow):
         self.folder_pane.context_menu_requested.connect(self.show_pane_context_menu)
         self.folder_pane.selection_changed.connect(self._preview_selection)
         self.folder_pane.close_requested.connect(lambda: self.set_dual_pane_visible(False))
+        self.folder_pane.model.fileRenamed.connect(self._on_renamed_in_place)
+        self.folder_pane.model.rename_failed.connect(self._on_rename_failed)
+        self.folder_pane.path_not_found.connect(
+            lambda path: QMessageBox.warning(self, "Path Not Found", f"Folder not found: {path}"))
         self.main_splitter.addWidget(self.folder_pane)
         QApplication.instance().focusChanged.connect(self._on_focus_changed)
 
@@ -623,7 +630,9 @@ class ModernExplorer(QMainWindow):
             (QKeySequence.StandardKey.Find, self._focus_search),
             ("Ctrl+Shift+N", self.create_new_folder),
             ("Ctrl+H", lambda: self.hidden_files_checkbox.toggle()),
-            ("Escape", self.clear_search),
+            ("Escape", self._escape),
+            ("Ctrl+L", self.edit_path),
+            ("Alt+D", self.edit_path),
             ("Ctrl+T", lambda: self.new_tab()),
             ("Ctrl+W", lambda: self.close_tab(self.tab_bar.currentIndex())),
             ("Ctrl+Tab", lambda: self._cycle_tab(1)),
@@ -666,6 +675,7 @@ class ModernExplorer(QMainWindow):
         """Stop background work and save preferences on close."""
         self.file_searcher.stop()
         self.file_model.shutdown()
+        self.folder_pane.model.shutdown()
         for job in list(self._jobs):
             job.cancel.set()
         self.settings.setValue("geometry", self.saveGeometry())
@@ -1245,7 +1255,7 @@ class ModernExplorer(QMainWindow):
         error_dialog.exec()
 
     def rename_selected_file(self, path=None):
-        """Rename a file or folder.
+        """Rename a file or folder, in place when it is visible, else with a dialog.
 
         Args:
             path: Item to rename; defaults to the single selected item
@@ -1258,6 +1268,8 @@ class ModernExplorer(QMainWindow):
             if not paths:
                 return
             path = paths[0]
+        if self._edit_in_place(path):
+            return
 
         old_name = os.path.basename(os.path.normpath(path))
         new_name, ok = QInputDialog.getText(self, "Rename", "New name:", text=old_name)
@@ -1284,6 +1296,45 @@ class ModernExplorer(QMainWindow):
         if self.current_view == "search":
             self._remove_missing_search_results()
         self.status_label.setText(f"Renamed to '{new_name}'")
+
+    def _edit_in_place(self, path):
+        """Open the in-place rename editor on path if a folder view shows it."""
+        if self.pane_is_active():
+            view, model, folder = self.folder_pane.view, self.folder_pane.model, self.folder_pane.current_path
+        elif self.current_view == "files":
+            view, model, folder = self._active_file_view(), self.file_model, self.current_path
+        else:
+            return False
+        if not paths_equal(os.path.dirname(os.path.normpath(path)), folder):
+            return False
+        index = model.index(path)
+        if not index.isValid():
+            return False
+        view.setCurrentIndex(index)
+        view.scrollTo(index)
+        view.edit(index)
+        return True
+
+    def _on_renamed_in_place(self, folder, old_name, new_name):
+        """Record an in-place rename so Ctrl+Z can undo it."""
+        self.add_operation_to_history("rename", [(os.path.join(folder, old_name), os.path.join(folder, new_name))])
+        self.status_label.setText(f"Renamed to '{new_name}'")
+
+    def _on_rename_failed(self, message):
+        QMessageBox.warning(self, "Rename", message)
+
+    def edit_path(self):
+        """Type or paste a path into the active pane's path bar (Ctrl+L / Alt+D)."""
+        bar = self.folder_pane.breadcrumb_bar if self.pane_is_active() else self.breadcrumb_bar
+        bar.start_editing()
+
+    def _escape(self):
+        """Esc: stop typing a path, otherwise clear the search."""
+        for bar in (self.breadcrumb_bar, self.folder_pane.breadcrumb_bar):
+            if bar.is_editing():
+                bar.stop_editing()
+                return
+        self.clear_search()
 
     def bulk_rename(self, paths):
         """Rename several items at once with a live preview (see BulkRenameDialog)."""

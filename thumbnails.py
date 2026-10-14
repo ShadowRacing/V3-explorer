@@ -2,7 +2,7 @@
 Thumbnail module for Shadows File Explorer.
 
 ThumbnailFileSystemModel is a QFileSystemModel that shows picture thumbnails
-instead of file icons. Images are decoded at a reduced size in background
+instead of file icons, and checks names before renaming items in place. Images are decoded at a reduced size in background
 threads (QImage is safe off the UI thread), cached in memory, and the view is
 told to repaint each item when its thumbnail is ready.
 """
@@ -11,6 +11,8 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
+
+from utils import is_valid_filename, paths_equal
 from PyQt6.QtGui import QColor, QFileSystemModel, QIcon, QImage, QImageReader, QPainter, QPixmap
 
 THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg"}
@@ -63,8 +65,17 @@ class _Loader(QObject):
 
 
 class ThumbnailFileSystemModel(QFileSystemModel):
-    """A QFileSystemModel that shows picture thumbnails while enabled."""
+    """A QFileSystemModel that shows picture thumbnails while enabled.
 
+    Items can be renamed in place (the view's editor); names are checked
+    first and problems reported through rename_failed instead of failing
+    silently. Successful renames emit QFileSystemModel's fileRenamed.
+
+    Signals:
+        rename_failed: An in-place rename was refused (message)
+    """
+
+    rename_failed = pyqtSignal(str)
     CACHE_SIZE = 600
 
     def __init__(self, parent=None, size=128):
@@ -78,6 +89,7 @@ class ThumbnailFileSystemModel(QFileSystemModel):
         self._pool = ThreadPoolExecutor(max_workers=2)
         self._loader = _Loader()
         self._loader.loaded.connect(self._on_loaded)
+        self.setReadOnly(False)  # Allow renaming in place
 
     def set_thumbnails_enabled(self, enabled):
         """Turn thumbnails on or off and repaint."""
@@ -92,6 +104,27 @@ class ThumbnailFileSystemModel(QFileSystemModel):
             if thumbnail is not None:
                 return thumbnail
         return super().data(index, role)
+
+    def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
+        if role != Qt.ItemDataRole.EditRole or not index.isValid() or index.column() != 0:
+            return super().setData(index, value, role)
+        old_name = self.fileName(index)
+        new_name = str(value).strip()
+        if not new_name or new_name == old_name:
+            return False
+        if not is_valid_filename(new_name):
+            self.rename_failed.emit(f"'{new_name}' is not a valid name.")
+            return False
+        old_path = self.filePath(index)
+        target = os.path.join(os.path.dirname(old_path), new_name)
+        # paths_equal allows case-only renames on case-insensitive file systems
+        if os.path.lexists(target) and not paths_equal(target, old_path):
+            self.rename_failed.emit(f"'{new_name}' already exists.")
+            return False
+        if not super().setData(index, new_name, role):
+            self.rename_failed.emit(f"Could not rename '{old_name}'.")
+            return False
+        return True
 
     def _thumbnail(self, index):
         """Cached thumbnail for index, scheduling it if needed (None until ready)."""

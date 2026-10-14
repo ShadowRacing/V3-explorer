@@ -10,7 +10,9 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
 - Sidebar with pinned Favorites, standard folders and drives, plus a "This PC" overview with disk usage
 - Drag and drop between folders, the sidebar and other apps
   (moves within a drive, copies between drives; hold Ctrl to copy, Shift to move)
-- Breadcrumb path bar and browser-style back / forward / up navigation
+- Breadcrumb path bar (click an empty spot or press Ctrl+L to type a path, with folder completion)
+  and browser-style back / forward / up navigation
+- Rename in place with F2 or by clicking a selected item; only the name is selected, not the extension
 - Multi-threaded search with filters for date, size and file type
   (prefix a search with `AllDrives:` to search every drive)
 - Copy, cut, paste, rename and delete, using the system clipboard so it works with other file managers
@@ -44,7 +46,8 @@ python main.py C:\Projects  # or start in a specific folder
 |---|---|
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
 | Delete / Shift+Delete | Move to Recycle Bin / delete permanently |
-| F2 | Rename (several selected: bulk rename) |
+| F2 | Rename in place (several selected: bulk rename) |
+| Ctrl+L / Alt+D | Type or paste a path in the path bar |
 | Ctrl+Z | Undo copy, move or rename |
 | Alt+Left / Backspace, Alt+Right | Back, forward |
 | Alt+Up | Up one folder |
