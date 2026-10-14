@@ -10,7 +10,7 @@ import struct
 import time
 import zipfile
 
-from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout, QStyle,
+from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout,
                             QHBoxLayout, QLabel, QLineEdit, QAbstractItemView,
                             QPushButton, QMenu, QMessageBox, QToolButton,
                             QProgressBar, QListView, QTreeView, QComboBox,
@@ -24,6 +24,7 @@ from theme_manager import ThemeManager
 from file_operation_safety_manager import FileOperationSafetyManager
 from navigation_panel import NavigationPanel
 from file_views import FileListView, FileTreeView
+from icons import FileIconProvider, file_type_icon, ui_icon
 from breadcrumb_bar import FixedBreadcrumbBar
 from drive_components import DrivesView
 from preview_pane import PreviewPane
@@ -45,6 +46,17 @@ PROGRESS_DIALOG_THRESHOLD = 5  # show a progress dialog above this many items
 MAX_UNDO_HISTORY = 20
 
 VIEW_ICONS, VIEW_LIST, VIEW_DETAILS = range(3)
+
+# Context menu entries that get an icon (see _decorate_menu)
+MENU_ICONS = {
+    "Open in New Tab": "tab", "Open in New Window": "window", "Open File Location": "folder",
+    "Cut": "cut", "Copy": "copy", "Copy as Path": "copy", "Paste": "paste",
+    "Delete": "delete", "Rename": "rename", "Properties": "properties", "Refresh": "refresh",
+    "New": "new", "Folder": "folder", "Text Document": "documents", "View": "view_icons",
+    "Pin to Favorites": "star", "Unpin from Favorites": "star",
+    "Pin This Folder to Favorites": "star", "Unpin This Folder": "star",
+    "Icons": "view_icons", "List": "view_list", "Details": "view_details", "Hidden files": "hidden",
+}
 
 
 class BrowserTab:
@@ -146,6 +158,9 @@ class ModernExplorer(QMainWindow):
             QFileSystemModel: Configured file model
         """
         model = QFileSystemModel(self)
+        # Keep a reference: the model does not take ownership of the provider
+        self.icon_provider = FileIconProvider()
+        model.setIconProvider(self.icon_provider)
         model.setRootPath("")
         return model
 
@@ -166,10 +181,38 @@ class ModernExplorer(QMainWindow):
             theme_name: Name of the theme to apply
         """
         self.setStyleSheet(self.theme_manager.get_theme_stylesheet(theme_name))
-        self.preview_pane.set_dark(self.theme_manager.is_dark(theme_name))
+        palette = self.theme_manager.palette(theme_name)
+        self.icon_color = palette["icon"]
+        for widget, name in self.themed_icons:
+            widget.setIcon(ui_icon(name, self.icon_color))
+        self.navigation_panel.set_icon_color(self.icon_color)
+        self.preview_pane.set_icon_color(self.icon_color)
+        self.preview_pane.set_dark(palette["dark"])
+        DrivesView.icon_color = self.icon_color
+        if self.current_view == "drives":
+            self.drives_view.load_drives()
+
+    def _themed(self, widget, icon_name):
+        """Give a button or action an icon that follows the theme's icon color."""
+        widget.setIcon(ui_icon(icon_name, self.icon_color))
+        self.themed_icons.append((widget, icon_name))
+        return widget
+
+    def _decorate_menu(self, menu):
+        """Add icons to a context menu's actions, matched by their text."""
+        for action in menu.actions():
+            name = MENU_ICONS.get(action.text())
+            if name:
+                action.setIcon(ui_icon(name, self.icon_color))
+            if action.menu():
+                self._decorate_menu(action.menu())
 
     def setup_ui(self):
         """Set up the user interface."""
+        self.themed_icons = []
+        self.icon_color = self.theme_manager.palette()["icon"]
+        self.setWindowIcon(file_type_icon("folder"))
+
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
@@ -182,108 +225,80 @@ class ModernExplorer(QMainWindow):
         self._setup_content_area()
         self._setup_action_bar()
 
-    def _make_tool_button(self, text, tooltip, slot):
-        """Create a fixed-size toolbar button."""
+    def _make_tool_button(self, icon_name, tooltip, slot, checkable=False):
+        """Create an icon-only toolbar button."""
         button = QToolButton()
-        button.setText(text)
+        self._themed(button, icon_name)
+        button.setIconSize(QSize(18, 18))
         button.setToolTip(tooltip)
+        button.setCheckable(checkable)
         button.clicked.connect(slot)
-        button.setFixedSize(30, 30)
+        button.setFixedSize(32, 32)
         return button
 
     def _setup_app_bar(self):
         """Set up the application bar at the top."""
         self.app_bar = QWidget()
         self.app_bar.setObjectName("appbar")
-        self.app_bar.setMaximumHeight(40)
+        self.app_bar.setFixedHeight(52)
         self.app_bar_layout = QHBoxLayout(self.app_bar)
-        self.app_bar_layout.setContentsMargins(8, 4, 8, 4)
+        self.app_bar_layout.setContentsMargins(12, 8, 12, 8)
+        self.app_bar_layout.setSpacing(4)
 
         # App icon and title
-        app_title_layout = QHBoxLayout()
         app_icon = QLabel()
-        icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-        app_icon.setPixmap(icon.pixmap(24, 24))
-        app_title_layout.addWidget(app_icon)
-
+        app_icon.setPixmap(file_type_icon("folder").pixmap(24, 24))
+        app_icon.setStyleSheet("background: transparent;")
+        self.app_bar_layout.addWidget(app_icon)
         app_title = QLabel("Shadows Explorer")
-        app_title.setStyleSheet("font-weight: bold; font-size: 16px;")
-        app_title_layout.addWidget(app_title)
-
-        self.app_bar_layout.addLayout(app_title_layout)
-        self.app_bar_layout.addSpacing(10)
+        app_title.setObjectName("app_title")
+        self.app_bar_layout.addWidget(app_title)
+        self.app_bar_layout.addSpacing(12)
 
         # Navigation buttons
-        nav_layout = QHBoxLayout()
-        nav_layout.setSpacing(2)
-
-        self.back_button = self._make_tool_button("←", "Back (Alt+Left)", self.navigate_back)
-        self.forward_button = self._make_tool_button("→", "Forward (Alt+Right)", self.navigate_forward)
-        self.up_button = self._make_tool_button("↑", "Up (Alt+Up)", self.navigate_up)
-        self.refresh_button = self._make_tool_button("⟳", "Refresh (F5)", self.refresh_view)
-        self.undo_button = self._make_tool_button("↩", "Undo (Ctrl+Z)", self.undo_last_operation)
+        self.back_button = self._make_tool_button("back", "Back (Alt+Left)", self.navigate_back)
+        self.forward_button = self._make_tool_button("forward", "Forward (Alt+Right)", self.navigate_forward)
+        self.up_button = self._make_tool_button("up", "Up (Alt+Up)", self.navigate_up)
+        self.refresh_button = self._make_tool_button("refresh", "Refresh (F5)", self.refresh_view)
+        self.undo_button = self._make_tool_button("undo", "Undo (Ctrl+Z)", self.undo_last_operation)
         self.undo_button.setEnabled(False)
-
         for button in (self.back_button, self.forward_button, self.up_button,
                        self.refresh_button, self.undo_button):
-            nav_layout.addWidget(button)
-
-        self.app_bar_layout.addLayout(nav_layout)
-        self.app_bar_layout.addSpacing(10)
+            self.app_bar_layout.addWidget(button)
+        self.app_bar_layout.addSpacing(8)
 
         # Breadcrumb navigation
         self.breadcrumb_bar = FixedBreadcrumbBar()
         self.breadcrumb_bar.path_changed.connect(self.navigate_to)
         self.app_bar_layout.addWidget(self.breadcrumb_bar, 1)
+        self.app_bar_layout.addSpacing(8)
 
-        # Search bar
+        # Search box with a search icon inside it
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search files... (Ctrl+F)")
+        self.search_box.setPlaceholderText("Search  (Ctrl+F)")
         self.search_box.setToolTip("Search in current location, or use 'AllDrives:' prefix to search all drives")
-        self.search_box.setMaximumWidth(200)
+        self.search_box.setFixedWidth(240)
         self.search_box.returnPressed.connect(self.search_files)
+        search_action = self.search_box.addAction(ui_icon("search", self.icon_color),
+                                                  QLineEdit.ActionPosition.LeadingPosition)
+        self.themed_icons.append((search_action, "search"))
+        search_action.setToolTip("Search")
+        search_action.triggered.connect(self.search_files)
+        self.app_bar_layout.addWidget(self.search_box)
 
-        search_bar_layout = QHBoxLayout()
-        search_bar_layout.setSpacing(0)
-
-        self.search_button = QToolButton()
-        self.search_button.setText("🔍")
-        self.search_button.setToolTip("Search")
-        self.search_button.clicked.connect(self.search_files)
-
-        self.clear_search_button = QToolButton()
-        self.clear_search_button.setText("✕")
-        self.clear_search_button.setToolTip("Clear Search (Esc)")
-        self.clear_search_button.clicked.connect(self.clear_search)
+        self.clear_search_button = self._make_tool_button("close", "Clear Search (Esc)", self.clear_search)
         self.clear_search_button.setVisible(False)
+        self.app_bar_layout.addWidget(self.clear_search_button)
 
-        self.advanced_search_button = QToolButton()
-        self.advanced_search_button.setText("⚲")
-        self.advanced_search_button.setToolTip("Advanced Search")
-        self.advanced_search_button.clicked.connect(self.show_advanced_search)
+        self.advanced_search_button = self._make_tool_button("filter", "Advanced Search", self.show_advanced_search)
+        self.app_bar_layout.addWidget(self.advanced_search_button)
+        self.app_bar_layout.addSpacing(4)
 
-        search_bar_layout.addWidget(self.search_box)
-        search_bar_layout.addWidget(self.search_button)
-        search_bar_layout.addWidget(self.clear_search_button)
-        search_bar_layout.addWidget(self.advanced_search_button)
-
-        self.app_bar_layout.addLayout(search_bar_layout)
-
-        # Settings button
-        self.theme_button = QToolButton()
-        self.theme_button.setText("⚙")
-        self.theme_button.setToolTip("Settings")
-        self.theme_button.clicked.connect(self.show_settings)
-        self.app_bar_layout.addWidget(self.theme_button)
-
-        # Preview toggle button
-        self.toggle_preview_button = QToolButton()
-        self.toggle_preview_button.setText("◪")
-        self.toggle_preview_button.setToolTip("Show Preview Panel")
-        self.toggle_preview_button.setCheckable(True)
-        self.toggle_preview_button.clicked.connect(self.toggle_preview_panel)
-        self.toggle_preview_button.setStyleSheet("font-size: 16px;")
+        self.toggle_preview_button = self._make_tool_button("preview", "Show Preview Panel",
+                                                            self.toggle_preview_panel, checkable=True)
         self.app_bar_layout.addWidget(self.toggle_preview_button)
+        self.theme_button = self._make_tool_button("settings", "Settings", self.show_settings)
+        self.app_bar_layout.addWidget(self.theme_button)
 
         self.main_layout.addWidget(self.app_bar)
 
@@ -291,30 +306,47 @@ class ModernExplorer(QMainWindow):
         """Set up the row of tabs below the app bar."""
         tab_row = QWidget()
         tab_row.setObjectName("tab_row")
+        tab_row.setFixedHeight(38)
         tab_layout = QHBoxLayout(tab_row)
-        tab_layout.setContentsMargins(8, 2, 8, 0)
+        tab_layout.setContentsMargins(8, 4, 8, 0)
         tab_layout.setSpacing(4)
-        
+
         self.tab_bar = QTabBar()
-        self.tab_bar.setTabsClosable(True)
         self.tab_bar.setMovable(True)
         self.tab_bar.setDocumentMode(True)
         self.tab_bar.setExpanding(False)
         self.tab_bar.setElideMode(Qt.TextElideMode.ElideMiddle)
         self.tab_bar.setUsesScrollButtons(True)
+        self.tab_bar.setIconSize(QSize(16, 16))
         self.tab_bar.currentChanged.connect(self._on_tab_changed)
-        self.tab_bar.tabCloseRequested.connect(self.close_tab)
-        tab_layout.addWidget(self.tab_bar)
-        
-        new_tab_button = QToolButton()
-        new_tab_button.setText("+")
-        new_tab_button.setToolTip("New Tab (Ctrl+T)")
-        new_tab_button.clicked.connect(lambda: self.new_tab())
-        tab_layout.addWidget(new_tab_button)
+        tab_layout.addWidget(self.tab_bar, 0, Qt.AlignmentFlag.AlignBottom)
+
+        new_tab_button = self._make_tool_button("plus", "New Tab (Ctrl+T)", lambda: self.new_tab())
+        new_tab_button.setFixedSize(28, 28)
+        tab_layout.addWidget(new_tab_button, 0, Qt.AlignmentFlag.AlignVCenter)
         tab_layout.addStretch()
-        
+
         self.main_layout.addWidget(tab_row)
-    
+
+    def _add_tab_close_button(self, index):
+        """Put a themed close button on a tab."""
+        button = QToolButton()
+        self._themed(button, "close")
+        button.setIconSize(QSize(12, 12))
+        button.setFixedSize(18, 18)
+        button.setToolTip("Close Tab (Ctrl+W)")
+        button.setStyleSheet("QToolButton { padding: 0px; border-radius: 9px; }")
+        button.clicked.connect(lambda: self.close_tab(self._tab_index_of_button(button)))
+        self.tab_bar.setTabButton(index, QTabBar.ButtonPosition.RightSide, button)
+        button.destroyed.connect(lambda: self.themed_icons.remove((button, "close"))
+                                 if (button, "close") in self.themed_icons else None)
+
+    def _tab_index_of_button(self, button):
+        for index in range(self.tab_bar.count()):
+            if self.tab_bar.tabButton(index, QTabBar.ButtonPosition.RightSide) is button:
+                return index
+        return -1
+
     def _setup_file_view(self, view):
         """Apply settings shared by the icon/list view and the details view."""
         view.setModel(self.file_model)
@@ -331,13 +363,13 @@ class ModernExplorer(QMainWindow):
         """Set up the main content area."""
         content_container = QWidget()
         content_layout = QHBoxLayout(content_container)
-        content_layout.setContentsMargins(4, 4, 4, 4)
-        content_layout.setSpacing(4)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
 
         # Sidebar with navigation panel
         self.sidebar = QFrame()
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setMaximumWidth(200)
+        self.sidebar.setFixedWidth(220)
         sidebar_layout = QVBoxLayout(self.sidebar)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -345,7 +377,7 @@ class ModernExplorer(QMainWindow):
         self.navigation_panel.item_clicked.connect(self.handle_navigation_item)
         self.navigation_panel.files_dropped.connect(self.transfer_files)
         self.navigation_panel.open_in_new_tab.connect(self.new_tab)
-        
+
         # Scrollable, so long favorites and drive lists still fit
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
@@ -358,25 +390,47 @@ class ModernExplorer(QMainWindow):
 
         # Main splitter for content and preview
         self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.setHandleWidth(1)
 
         self.content_frame = QFrame()
         self.content_frame.setObjectName("content")
         content_frame_layout = QVBoxLayout(self.content_frame)
         content_frame_layout.setContentsMargins(0, 0, 0, 0)
+        content_frame_layout.setSpacing(0)
 
         # View controls
         view_controls = QWidget()
+        view_controls.setObjectName("view_controls")
         view_layout = QHBoxLayout(view_controls)
-        view_layout.setContentsMargins(8, 4, 8, 4)
+        view_layout.setContentsMargins(12, 8, 12, 6)
+        view_layout.setSpacing(2)
 
-        view_layout.addWidget(QLabel("View:"))
-
+        # The combo box holds the view mode; the icon buttons are its visible face
         self.view_mode_combo = QComboBox()
         self.view_mode_combo.addItems(["Icons", "List", "Details"])
+        self.view_mode_combo.setVisible(False)
+        self.view_mode_buttons = []
+        for mode, icon_name, tooltip in ((VIEW_ICONS, "view_icons", "Icons"),
+                                         (VIEW_LIST, "view_list", "List"),
+                                         (VIEW_DETAILS, "view_details", "Details")):
+            button = self._make_tool_button(icon_name, tooltip,
+                                            lambda checked=False, m=mode: self.view_mode_combo.setCurrentIndex(m),
+                                            checkable=True)
+            button.setAutoExclusive(True)
+            self.view_mode_buttons.append(button)
+            view_layout.addWidget(button)
+        self.view_mode_buttons[VIEW_ICONS].setChecked(True)
         self.view_mode_combo.currentIndexChanged.connect(self.change_view_mode)
+        self.view_mode_combo.currentIndexChanged.connect(
+            lambda index: self.view_mode_buttons[index].setChecked(True))
         view_layout.addWidget(self.view_mode_combo)
+        view_layout.addSpacing(8)
 
-        self.hidden_files_checkbox = QCheckBox("Hidden files")
+        self.hidden_files_checkbox = QToolButton()
+        self._themed(self.hidden_files_checkbox, "hidden")
+        self.hidden_files_checkbox.setText("Hidden files")
+        self.hidden_files_checkbox.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.hidden_files_checkbox.setCheckable(True)
         self.hidden_files_checkbox.setToolTip("Show hidden files (Ctrl+H)")
         self.hidden_files_checkbox.toggled.connect(self._set_show_hidden)
         view_layout.addWidget(self.hidden_files_checkbox)
@@ -391,13 +445,13 @@ class ModernExplorer(QMainWindow):
 
         self.search_progress = QProgressBar()
         self.search_progress.setTextVisible(False)
-        self.search_progress.setMaximumWidth(150)
+        self.search_progress.setFixedWidth(120)
 
         self.search_status_label = QLabel("")
+        self.search_status_label.setObjectName("status_label")
 
         self.stop_search_button = QPushButton("Stop")
         self.stop_search_button.clicked.connect(self.stop_search)
-        self.stop_search_button.setMaximumWidth(80)
 
         search_status_layout.addWidget(self.search_progress)
         search_status_layout.addWidget(self.search_status_label, 1)
@@ -413,7 +467,7 @@ class ModernExplorer(QMainWindow):
         self.file_view = FileListView()
         self._setup_file_view(self.file_view)
         self.file_view.setResizeMode(QListView.ResizeMode.Adjust)
-        self.file_view.setUniformItemSizes(True)
+        self.file_view.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self._apply_list_mode(VIEW_ICONS)
 
         # Detail view
@@ -423,7 +477,9 @@ class ModernExplorer(QMainWindow):
         self.detail_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.detail_view.setRootIsDecorated(False)
         self.detail_view.setItemsExpandable(False)
-        self.detail_view.setColumnWidth(0, 300)
+        self.detail_view.setUniformRowHeights(True)
+        self.detail_view.setIconSize(QSize(18, 18))
+        self.detail_view.setColumnWidth(0, 320)
 
         # Search results view
         self.search_view = QTreeView()
@@ -434,6 +490,8 @@ class ModernExplorer(QMainWindow):
         self.search_view.customContextMenuRequested.connect(self.show_search_context_menu)
         self.search_view.setRootIsDecorated(False)
         self.search_view.setSortingEnabled(True)
+        self.search_view.setUniformRowHeights(True)
+        self.search_view.setIconSize(QSize(18, 18))
         self.search_view.setColumnWidth(0, 250)
         self.search_view.setColumnWidth(1, 350)
         self.search_view.selectionModel().selectionChanged.connect(self.on_search_selection_changed)
@@ -461,21 +519,25 @@ class ModernExplorer(QMainWindow):
 
         content_layout.addWidget(self.main_splitter)
 
-        self.main_layout.addWidget(content_container)
+        # Stretch 1: the content area, not the bars, takes any extra height
+        self.main_layout.addWidget(content_container, 1)
 
     def _setup_action_bar(self):
         """Set up the bottom action bar."""
         self.action_bar = QWidget()
         self.action_bar.setObjectName("action_bar")
+        self.action_bar.setFixedHeight(48)
         action_bar_layout = QHBoxLayout(self.action_bar)
-        action_bar_layout.setContentsMargins(16, 8, 16, 8)
+        action_bar_layout.setContentsMargins(12, 8, 12, 8)
+        action_bar_layout.setSpacing(6)
 
         # New button with menu
         self.new_button = QPushButton("New")
+        self._themed(self.new_button, "new")
         new_menu = QMenu(self)
 
-        new_menu.addAction("Folder", self.create_new_folder)
-        new_menu.addAction("Text Document", lambda: self.create_new_file(".txt"))
+        self._themed(new_menu.addAction("Folder", self.create_new_folder), "folder")
+        self._themed(new_menu.addAction("Text Document", lambda: self.create_new_file(".txt")), "documents")
         new_menu.addSeparator()
         new_menu.addAction("Word Document", lambda: self.create_new_file(".docx"))
         new_menu.addAction("Excel Spreadsheet", lambda: self.create_new_file(".xlsx"))
@@ -486,17 +548,22 @@ class ModernExplorer(QMainWindow):
 
         self.new_button.setMenu(new_menu)
         action_bar_layout.addWidget(self.new_button)
+        action_bar_layout.addSpacing(6)
 
         # File operation buttons
-        for text, slot in (("Copy", self.copy_selected_files), ("Cut", self.cut_selected_files),
-                           ("Paste", self.paste_files), ("Delete", self.delete_selected_files)):
+        for text, icon_name, slot in (("Copy", "copy", self.copy_selected_files),
+                                      ("Cut", "cut", self.cut_selected_files),
+                                      ("Paste", "paste", self.paste_files),
+                                      ("Delete", "delete", self.delete_selected_files)):
             button = QPushButton(text)
+            self._themed(button, icon_name)
             button.clicked.connect(lambda checked=False, s=slot: s())
             action_bar_layout.addWidget(button)
 
         action_bar_layout.addStretch()
 
         self.status_label = QLabel()
+        self.status_label.setObjectName("status_label")
         action_bar_layout.addWidget(self.status_label)
 
         self.main_layout.addWidget(self.action_bar)
@@ -672,6 +739,7 @@ class ModernExplorer(QMainWindow):
         properties_action = menu.addAction("Properties")
         properties_action.setEnabled(len(paths) == 1)
 
+        self._decorate_menu(menu)
         action = menu.exec(self.search_view.viewport().mapToGlobal(position))
 
         if action == open_action:
@@ -723,6 +791,7 @@ class ModernExplorer(QMainWindow):
             menu.addAction("Unpin This Folder" if pinned else "Pin This Folder to Favorites",
                            self.toggle_favorite_current)
             menu.addAction("Properties", lambda: self.show_properties(self.current_path))
+            self._decorate_menu(menu)
             menu.exec(view.viewport().mapToGlobal(position))
             return
 
@@ -747,6 +816,7 @@ class ModernExplorer(QMainWindow):
         properties_action = menu.addAction("Properties")
         properties_action.setEnabled(single)
 
+        self._decorate_menu(menu)
         action = menu.exec(view.viewport().mapToGlobal(position))
 
         if action == open_action:
@@ -1366,8 +1436,9 @@ class ModernExplorer(QMainWindow):
         title = "This PC" if location == "pc" else (os.path.basename(os.path.normpath(location)) or location)
         if position is None:
             position = self.tab_bar.currentIndex() + 1
-        index = self.tab_bar.insertTab(position, title)
+        index = self.tab_bar.insertTab(position, self._location_icon(location), title)
         self.tab_bar.setTabData(index, tab)
+        self._add_tab_close_button(index)
         self.tab_bar.setTabToolTip(index, "This PC" if location == "pc" else location)
         if select:
             self.tab_bar.setCurrentIndex(index)
@@ -1402,6 +1473,13 @@ class ModernExplorer(QMainWindow):
         if index >= 0:
             self.tab_bar.setTabText(index, title)
             self.tab_bar.setTabToolTip(index, tooltip)
+            self.tab_bar.setTabIcon(index, self._location_icon("pc" if tooltip == "This PC" else tooltip))
+
+    def _location_icon(self, location):
+        """Tab icon: a computer for This PC, otherwise a folder."""
+        if location == "pc":
+            return ui_icon("pc", self.icon_color)
+        return file_type_icon("folder")
 
     # -------------------------- Favorites --------------------------
 
@@ -1477,15 +1555,15 @@ class ModernExplorer(QMainWindow):
         """Configure the QListView for icon or list display."""
         if index == VIEW_ICONS:
             self.file_view.setViewMode(QListView.ViewMode.IconMode)
-            self.file_view.setGridSize(QSize(120, 100))
+            self.file_view.setGridSize(QSize(112, 100))
             self.file_view.setIconSize(QSize(48, 48))
-            self.file_view.setSpacing(10)
+            self.file_view.setSpacing(6)
             self.file_view.setWordWrap(True)
         else:
             self.file_view.setViewMode(QListView.ViewMode.ListMode)
             self.file_view.setGridSize(QSize())
-            self.file_view.setIconSize(QSize(20, 20))
-            self.file_view.setSpacing(2)
+            self.file_view.setIconSize(QSize(18, 18))
+            self.file_view.setSpacing(1)
             self.file_view.setWordWrap(False)
         # setViewMode resets this; keep items from being dragged around inside the view
         self.file_view.setMovement(QListView.Movement.Static)

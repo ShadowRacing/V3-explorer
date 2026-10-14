@@ -7,11 +7,12 @@ class for displaying a grid of drives.
 """
 import os
 import platform
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStyle,
-                            QProgressBar, QApplication, QScrollArea, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+                            QProgressBar, QScrollArea, 
                             QGridLayout)
 from PyQt6.QtCore import pyqtSignal, Qt, QStorageInfo
 
+from icons import ui_icon
 from utils import format_size
 
 
@@ -155,6 +156,9 @@ class DriveItemWidget(QWidget):
         """
         super().__init__(parent)
         self.drive_info = drive_info
+        # Needed for the themed card background on a QWidget subclass
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setup_ui()
         
     def setup_ui(self):
@@ -168,8 +172,7 @@ class DriveItemWidget(QWidget):
         
         # Drive icon
         self.icon_label = QLabel()
-        icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_DriveHDIcon)
-        self.icon_label.setPixmap(icon.pixmap(48, 48))
+        self.icon_label.setPixmap(ui_icon("drive", DrivesView.icon_color).pixmap(40, 40))
         drive_header.addWidget(self.icon_label)
         
         # Drive name and path
@@ -193,10 +196,10 @@ class DriveItemWidget(QWidget):
         else:
             self.name_label = QLabel(self.drive_info.name)
         
-        self.name_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        
+        self.name_label.setStyleSheet("font-weight: 600; font-size: 14px;")
+
         self.path_label = QLabel(self.drive_info.path)
-        self.path_label.setStyleSheet("font-size: 11px; opacity: 0.7;")
+        self.path_label.setStyleSheet("font-size: 11px;")
         
         name_layout.addWidget(self.name_label)
         name_layout.addWidget(self.path_label)
@@ -207,7 +210,10 @@ class DriveItemWidget(QWidget):
         
         # Progress bar
         self.progress_bar = QProgressBar()
-        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setTextVisible(False)
+        if self.drive_info.usage_percent >= 90:
+            # Nearly full drives get a red bar, as in Windows
+            self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #dc2626; }")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(int(self.drive_info.usage_percent))
         self.progress_bar.setFormat(f"{int(self.drive_info.usage_percent)}% used")
@@ -215,7 +221,6 @@ class DriveItemWidget(QWidget):
         # Free space info
         self.info_label = QLabel(self.drive_info.storage_info)
         self.info_label.setStyleSheet("font-size: 12px;")
-        self.info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         # Add all components to layout
         self.layout.addLayout(drive_header)
@@ -226,8 +231,8 @@ class DriveItemWidget(QWidget):
         self.setAutoFillBackground(True)
         
         # Set fixed size
-        self.setMinimumWidth(250)
-        self.setMinimumHeight(150)
+        self.setMinimumWidth(260)
+        self.setMinimumHeight(130)
         
     def mousePressEvent(self, event):
         """Handle mouse press events to make the widget clickable.
@@ -253,7 +258,8 @@ class DrivesView(QScrollArea):
     """
     
     drive_clicked = pyqtSignal(str)
-    
+    icon_color = "#c9ced6"  # set by the main window to match the theme
+
     def __init__(self, parent=None):
         """Initialize the drives view.
         

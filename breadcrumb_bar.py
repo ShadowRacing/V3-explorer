@@ -32,11 +32,13 @@ class FixedBreadcrumbBar(QWidget):
             parent: Parent widget
         """
         super().__init__(parent)
-        self.setFixedHeight(40)
+        self.setFixedHeight(32)
+        # Needed for the themed border and background on a QWidget subclass
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         
         # Main layout
         self.main_layout = QHBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setContentsMargins(4, 0, 4, 0)
         self.main_layout.setSpacing(0)
         
         # Create a scrollable area for breadcrumbs
@@ -129,27 +131,14 @@ class FixedBreadcrumbBar(QWidget):
         for i, (part_text, part_path) in enumerate(parts):
             if i > 0:
                 separator = QLabel("›")
-                separator.setStyleSheet("color: #888888; font-size: 16px; padding: 0 4px;")
+                separator.setObjectName("crumb_separator")
                 self.layout.addWidget(separator)
                 self.separators.append(separator)
-            
+
             button = QPushButton(part_text)
-            button.setStyleSheet("""
-                QPushButton {
-                    background-color: transparent;
-                    border: none;
-                    border-radius: 6px;
-                    padding: 4px 8px;
-                    text-align: center;
-                    font-size: 13px;
-                }
-                QPushButton:hover {
-                    background-color: rgba(0, 0, 0, 0.05);
-                }
-                QPushButton:pressed {
-                    background-color: rgba(0, 0, 0, 0.1);
-                }
-            """)
+            # The current folder is shown in bold (styled by the theme)
+            button.setObjectName("crumb_current" if i == len(parts) - 1 else "crumb")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setProperty("path", part_path)
             button.clicked.connect(self._on_path_button_clicked)
             

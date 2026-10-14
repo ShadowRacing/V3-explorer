@@ -5,9 +5,9 @@ This module provides the SearchResultsModel class which manages
 and displays search results.
 """
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
-from PyQt6.QtWidgets import QStyle, QApplication
 from PyQt6.QtCore import Qt
 
+from icons import file_icon_for_path
 from utils import format_size
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -33,10 +33,6 @@ class SearchResultsModel(QStandardItemModel):
         self.setHorizontalHeaderLabels(["Name", "Location", "Size", "Date Modified"])
         self.setSortRole(SORT_ROLE)
 
-        style = QApplication.style()
-        self._dir_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
-        self._file_icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-
     def clear_results(self):
         """Clear all search results."""
         self.removeRows(0, self.rowCount())
@@ -50,7 +46,7 @@ class SearchResultsModel(QStandardItemModel):
         name_item = QStandardItem(result.filename)
         name_item.setData(result.filepath, PATH_ROLE)
         name_item.setData(result.filename.lower(), SORT_ROLE)
-        name_item.setIcon(self._dir_icon if result.is_directory else self._file_icon)
+        name_item.setIcon(file_icon_for_path(result.filepath, result.is_directory))
 
         location_item = QStandardItem(result.directory)
         location_item.setData(result.directory.lower(), SORT_ROLE)
