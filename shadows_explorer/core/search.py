@@ -162,6 +162,7 @@ class FileSearcher(QObject):
         self.search_locations = []
         self.search_term = ""
         self.query = parse_query("")
+        self.tag_lookup = None  # Optional callable(path) -> lowercase tag names, for tag: filters
         self.search_options = {}
         self.search_id = 0
         self.total_files_scanned = 0
@@ -315,6 +316,10 @@ class FileSearcher(QObject):
             return
         if not query.matches(entry.name, is_dir, size, mtime):
             return
+        if query.tags or query.excluded_tags:
+            names = self.tag_lookup(entry.path) if self.tag_lookup else ()
+            if not query.matches_tags(names):
+                return
         snippet = ""
         if query.content:
             # Reading the file is the slow part, so it comes after every other check

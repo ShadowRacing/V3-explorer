@@ -16,6 +16,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from shadows_explorer.core.disk_usage import folder_size
 from shadows_explorer.core.utils import format_size, is_valid_filename, paths_equal
 from PyQt6.QtGui import QColor, QFileSystemModel, QIcon, QImage, QImageReader, QPainter, QPixmap
+from shadows_explorer.ui.tags import TAG_COLORS_ROLE
 
 THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg"}
 MAX_IMAGE_BYTES = 80 * 1024 * 1024  # Skip enormous files
@@ -93,6 +94,7 @@ class ThumbnailFileSystemModel(QFileSystemModel):
         self._loader = _Loader()
         self._loader.loaded.connect(self._on_loaded)
         self.setReadOnly(False)  # Allow renaming in place
+        self.tag_store = None  # core.tags.TagStore, for tag dots (set by the window)
 
         # Folder sizes for the Size column (optional; a full walk per folder)
         self.folder_sizes_enabled = False
@@ -109,6 +111,14 @@ class ThumbnailFileSystemModel(QFileSystemModel):
             self.layoutChanged.emit()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        if role in (TAG_COLORS_ROLE, Qt.ItemDataRole.ToolTipRole) and self.tag_store is not None:
+            if not index.isValid() or index.column() != 0:
+                return None
+            if role == TAG_COLORS_ROLE:
+                return self.tag_store.colors_for(self.filePath(index))
+            tags = self.tag_store.tags_for(self.filePath(index))
+            if tags:
+                return f"{self.fileName(index)}\nTags: {', '.join(tags)}"
         if (self.thumbnails_enabled and role == Qt.ItemDataRole.DecorationRole
                 and index.isValid() and index.column() == 0):
             thumbnail = self._thumbnail(index)

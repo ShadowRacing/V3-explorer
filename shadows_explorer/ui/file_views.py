@@ -7,8 +7,10 @@ moves.
 """
 import os
 
-from PyQt6.QtWidgets import QAbstractItemView, QLineEdit, QListView, QStyledItemDelegate, QTreeView
+from PyQt6.QtWidgets import QAbstractItemView, QLineEdit, QListView, QTreeView
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+
+from shadows_explorer.ui.tags import TagDotsDelegate
 
 
 def local_paths_from_mime(mime):
@@ -44,8 +46,8 @@ def should_move(sources, destination, modifiers):
     return all(same_device(source, destination) for source in sources)
 
 
-class RenameDelegate(QStyledItemDelegate):
-    """In-place rename editor that selects the name but not the extension."""
+class RenameDelegate(TagDotsDelegate):
+    """In-place rename editor that selects the name but not the extension; also draws tag dots."""
     
     def setEditorData(self, editor, index):
         super().setEditorData(editor, index)

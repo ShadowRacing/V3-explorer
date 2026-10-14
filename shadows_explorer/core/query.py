@@ -16,8 +16,9 @@ A search box query is a list of words and filters, all of which must match:
     modified:>2024-03       lastmonth, thisyear, lastyear, a date (2024,
     modified:2024-01..2024-06    2024-05 or 2024-05-17), with > < >= <= or a..b
     content:"some text"     the file contains the text (text files only)
+    tag:red  tag:work,home  has the tag (see core/tags.py)
 
-ext: and kind: can be negated too (-ext:tmp). No Qt dependency.
+ext:, kind: and tag: can be negated too (-ext:tmp). No Qt dependency.
 """
 import calendar
 import codecs
@@ -71,6 +72,7 @@ KEY_ALIASES = {
     "modified": "modified", "date": "modified", "datemodified": "modified",
     "content": "content", "contains": "content", "containing": "content",
     "name": "name",
+    "tag": "tag", "tags": "tag", "label": "tag",
 }
 
 # Keywords offered by the search box's autocomplete
@@ -79,7 +81,7 @@ SUGGESTIONS = (
                            "spreadsheet", "presentation", "program", "folder", "file")]
     + [f"size:{w}" for w in SIZE_WORDS] + ["size:>100MB", "size:<1MB", "size:1MB..10MB"]
     + [f"modified:{w}" for w in DATE_WORDS] + ["modified:>2024-01-01", "modified:2024"]
-    + ["ext:", "content:", "name:"]
+    + ["ext:", "content:", "name:", "tag:"]
 )
 
 TOKEN_RE = re.compile(r'-?(?:[A-Za-z]+:)?(?:"[^"]*"?|\S+)')
@@ -102,10 +104,18 @@ class Query:
     sizes: list = field(default_factory=list)          # (min, max), either may be None
     dates: list = field(default_factory=list)          # (start, end) timestamps, end exclusive
     content: str = ""
+    tags: set = field(default_factory=set)             # Lowercase tag names, any of them
+    excluded_tags: set = field(default_factory=set)
 
     def is_empty(self):
         return not (self.terms or self.exts or self.excluded_exts or self.kinds or self.excluded_kinds
-                    or self.sizes or self.dates or self.content)
+                    or self.sizes or self.dates or self.content or self.tags or self.excluded_tags)
+
+    def matches_tags(self, names):
+        """Check tag: filters against a file's tag names (lowercase)."""
+        if self.tags and not self.tags & set(names):
+            return False
+        return not self.excluded_tags & set(names)
 
     def matches_name(self, name):
         """Check the name words and wildcards (cheap: no file system access)."""
@@ -202,6 +212,9 @@ def parse_query(text, today=None):
                                      f"code, archive, pdf, program, folder or file.")
                 kinds |= KIND_ALIASES[name.strip()]
             (query.excluded_kinds if negate else query.kinds).update(kinds)
+        elif key == "tag":
+            tags = {t.strip() for t in lowered.split(",")} - {""}
+            (query.excluded_tags if negate else query.tags).update(tags)
         elif negate:
             raise QueryError(f"\"-{key}:\" can't be negated; use the opposite comparison instead.")
         elif key == "size":
