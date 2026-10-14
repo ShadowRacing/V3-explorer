@@ -6,6 +6,7 @@ from utils import (NavigationHistory, format_size, is_valid_filename, is_within,
 
 def test_format_size():
     assert format_size(0) == "0 bytes"
+    assert format_size(1) == "1 byte"
     assert format_size(1023) == "1023 bytes"
     assert format_size(1536) == "1.5 KB"
     assert format_size(5 * 1024 ** 2) == "5.0 MB"

@@ -19,7 +19,7 @@ def format_size(size_bytes):
         str: Formatted size, e.g. "1.5 MB"
     """
     if size_bytes < 1024:
-        return f"{size_bytes} bytes"
+        return "1 byte" if size_bytes == 1 else f"{size_bytes} bytes"
     for unit in ("KB", "MB", "GB"):
         size_bytes /= 1024
         if size_bytes < 1024 or unit == "GB":
