@@ -37,6 +37,9 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
 - Find Duplicates (right-click a folder): files with identical content, compared by size then hash;
   tick copies (or keep oldest/newest automatically) and send them to the Recycle Bin, never all copies
 - Analyze Disk Usage (right-click a folder): a size-sorted tree with share bars and the largest files
+- Open Terminal Here (Ctrl+` or right-click): opens Windows Terminal, PowerShell, macOS Terminal or
+  your Linux terminal ($TERMINAL first) in the current folder
+- Command bar (Ctrl+Shift+P): type a few letters of any command ("new fol", "theme dark") and press Enter
 - Light, dark, retro (Windows 98) and system themes with a matching icon set;
   window size, view mode and preview state are remembered
 
@@ -79,6 +82,8 @@ shadows-explorer                  # same as: python -m shadows_explorer
 | Middle-click a folder | Open it in a new tab |
 | Ctrl+D | Pin or unpin the current folder in Favorites |
 | Ctrl+Shift+D | Show or hide the second pane |
+| Ctrl+Shift+P | Command bar: search and run any command |
+| Ctrl+` | Open a terminal in the current folder |
 
 ## Project layout
 
@@ -94,11 +99,13 @@ shadows_explorer/
 │   ├── disk_usage.py       Folder sizes and disk usage scans
 │   ├── duplicates.py       Duplicate file finder
 │   ├── file_types.py       File extension → category (image, code, pdf, ...)
+│   ├── fuzzy.py            Fuzzy matching for the command bar
 │   ├── grouping.py         Sorting and grouping rules
 │   ├── open_with.py        Open-with commands and remembered programs
 │   ├── recent.py           Recent files/folders and the live filter pattern
 │   ├── safety.py           Protected folders, open/delete checks, Recycle Bin
 │   ├── search.py           Multi-threaded search engine and filters
+│   ├── terminal.py         Finds the terminal program to open in a folder
 │   └── utils.py            Paths, sizes, navigation history
 ├── ui/                     Windows, views and panes
 │   ├── main_window.py      The main window: navigation, tabs, file operations, search
@@ -111,6 +118,7 @@ shadows_explorer/
 │   ├── preview_pane.py     File preview panel
 │   ├── drives_view.py      "This PC" drive overview
 │   ├── search_results_model.py
+│   ├── command_palette.py  The Ctrl+Shift+P command bar
 │   └── dialogs/            Properties, settings, bulk rename, disk usage and duplicates dialogs
 └── theme/
     ├── theme_manager.py    One stylesheet, a color palette per theme

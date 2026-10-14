@@ -34,6 +34,8 @@ from shadows_explorer.core.bulk_rename import execute_renames
 from shadows_explorer.ui.dialogs.bulk_rename import BulkRenameDialog
 from shadows_explorer.ui.dialogs.disk_usage import DiskUsageDialog
 from shadows_explorer.ui.dialogs.duplicates import DuplicatesDialog
+from shadows_explorer.ui.command_palette import Command, CommandPalette
+from shadows_explorer.core.terminal import terminal_command
 from shadows_explorer.ui.dual_pane import FolderPane
 from shadows_explorer.ui.thumbnails import ThumbnailFileSystemModel
 from shadows_explorer.core.grouping import GROUP_MODES, SORT_KEYS, group_entries, list_entries, sort_entries
@@ -86,7 +88,7 @@ MENU_ICONS = {
     "Remove from Recent": "close", "Clear Recent Items": "delete",
     "Open with": "window", "Send to": "copy_to", "Compressed (zip) folder": "archive",
     "Choose program...": "folder", "Choose another app...": "window", "Choose folder...": "folder",
-    "Analyze Disk Usage": "usage", "Find Duplicates...": "copy",
+    "Analyze Disk Usage": "usage", "Find Duplicates...": "copy", "Open Terminal Here": "terminal",
 }
 
 
@@ -346,6 +348,8 @@ class ModernExplorer(QMainWindow):
         self.toggle_preview_button = self._make_tool_button("preview", "Show Preview Panel",
                                                             self.toggle_preview_panel, checkable=True)
         self.app_bar_layout.addWidget(self.toggle_preview_button)
+        self.command_button = self._make_tool_button("command", "Commands (Ctrl+Shift+P)", self.show_command_palette)
+        self.app_bar_layout.addWidget(self.command_button)
         self.theme_button = self._make_tool_button("settings", "Settings", self.show_settings)
         self.app_bar_layout.addWidget(self.theme_button)
 
@@ -716,10 +720,98 @@ class ModernExplorer(QMainWindow):
             ("Ctrl+Shift+Tab", lambda: self._cycle_tab(-1)),
             ("Ctrl+D", self.toggle_favorite_current),
             ("Ctrl+Shift+D", lambda: self.set_dual_pane_visible(not self.folder_pane.isVisible())),
+            ("Ctrl+Shift+P", self.show_command_palette),
+            ("Ctrl+`", lambda: self.open_terminal_here()),
         ]
         for key, slot in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(slot)
+
+    # -------------------------- Terminal and command bar --------------------------
+
+    def _active_folder(self):
+        """Folder shown in the active pane, or None (This PC, Recent, search)."""
+        if self.pane_is_active():
+            return self.folder_pane.current_path
+        return self.current_path if self.current_view == "files" else None
+
+    def open_terminal_here(self, folder=None):
+        """Open the system's terminal in a folder (default: the active pane's folder)."""
+        folder = folder or self._active_folder()
+        if not folder:
+            self.status_label.setText("Open a folder first to start a terminal there")
+            return
+        argv, working_directory = terminal_command(folder)
+        if argv is None:
+            QMessageBox.warning(self, "Open Terminal", "No terminal program was found on this system.")
+            return
+        started, _ = QProcess.startDetached(argv[0], argv[1:], working_directory)
+        if not started:
+            QMessageBox.warning(self, "Open Terminal", f"Could not start {argv[0]}.")
+
+    def show_command_palette(self):
+        """Ctrl+Shift+P: search and run any command."""
+        CommandPalette(self.commands(), self).exec()
+
+    def commands(self):
+        """Everything the command bar offers, reflecting the current state."""
+        selection = self.selected_paths()
+        folder = self._active_folder()
+        in_files = self.current_view == "files"
+        single_dir = len(selection) == 1 and os.path.isdir(selection[0])
+        C = Command
+        commands = [
+            C("Go Back", self.navigate_back, "Alt+Left", self.history.can_go_back()),
+            C("Go Forward", self.navigate_forward, "Alt+Right", self.history.can_go_forward()),
+            C("Go Up", self.navigate_up, "Alt+Up", in_files),
+            C("Refresh", self.refresh_view, "F5"),
+            C("Go to Home", lambda: self.navigate_to(os.path.expanduser("~"))),
+            C("Go to This PC", self.show_drives_view),
+            C("Go to Recent", self.show_recent_view),
+            C("Type a Path", self.edit_path, "Ctrl+L"),
+            C("New Tab", lambda: self.new_tab(), "Ctrl+T"),
+            C("Close Tab", lambda: self.close_tab(self.tab_bar.currentIndex()), "Ctrl+W"),
+            C("Next Tab", lambda: self._cycle_tab(1), "Ctrl+Tab", self.tab_bar.count() > 1),
+            C("New Folder", self.create_new_folder, "Ctrl+Shift+N", bool(folder)),
+            C("New Text Document", lambda: self.create_new_file(".txt"), "", bool(folder)),
+            C("Copy", self.copy_selected_files, "Ctrl+C", bool(selection)),
+            C("Cut", self.cut_selected_files, "Ctrl+X", bool(selection)),
+            C("Paste", self.paste_files, "Ctrl+V", bool(folder and self._read_clipboard()[0])),
+            C("Copy as Path", lambda: QApplication.clipboard().setText("\n".join(selection)), "", bool(selection)),
+            C("Delete", self.delete_selected_files, "Del", bool(selection)),
+            C("Rename", self.rename_selected_file, "F2", bool(selection)),
+            C("Compress to ZIP", lambda: self.compress_files(selection), "", bool(selection)),
+            C("Undo", self.undo_last_operation, "Ctrl+Z", bool(self.operation_history)),
+            C("Properties", self.show_selected_properties, "Alt+Enter", bool(selection or folder)),
+            C("Search Files", self._focus_search, "Ctrl+F"),
+            C("Advanced Search", self.show_advanced_search),
+            C("Filter This Folder", self._focus_filter, "Ctrl+E", in_files),
+            C("Analyze Disk Usage", lambda: self.show_disk_usage(selection[0] if single_dir else folder), "",
+              bool(single_dir or folder)),
+            C("Find Duplicates", lambda: self.find_duplicates(selection[0] if single_dir else folder), "",
+              bool(single_dir or folder)),
+            C("Open Terminal Here", lambda: self.open_terminal_here(selection[0] if single_dir else folder),
+              "Ctrl+`", bool(single_dir or folder)),
+            C("View: Icons", lambda: self.view_mode_combo.setCurrentIndex(VIEW_ICONS)),
+            C("View: List", lambda: self.view_mode_combo.setCurrentIndex(VIEW_LIST)),
+            C("View: Details", lambda: self.view_mode_combo.setCurrentIndex(VIEW_DETAILS)),
+            C("Show/Hide Hidden Files", self.hidden_files_checkbox.toggle, "Ctrl+H"),
+            C("Show/Hide Preview Panel", self.toggle_preview_panel),
+            C("Show/Hide Second Pane", lambda: self.set_dual_pane_visible(not self.folder_pane.isVisible()),
+              "Ctrl+Shift+D"),
+            C("Show/Hide Folder Sizes", lambda: self.set_folder_sizes(not self.file_model.folder_sizes_enabled)),
+            C("Pin/Unpin Current Folder", self.toggle_favorite_current, "Ctrl+D", in_files),
+            C("Settings", self.show_settings),
+        ]
+        commands += [C(f"Sort by {SORT_LABELS[key]}", lambda k=key: self.apply_sort(k, self.sort_descending))
+                     for key in SORT_KEYS]
+        commands += [C(f"Group by {GROUP_LABELS[mode]}" if mode != "none" else "Don't Group",
+                       lambda m=mode: self.set_group_mode(m)) for mode in GROUP_MODES]
+        commands += [C(f"Theme: {name.capitalize()}", lambda n=name: self.theme_manager.set_theme(n))
+                     for name in ("dark", "light", "retro", "system")]
+        commands += [C(f"Go to Favorite: {os.path.basename(os.path.normpath(f)) or f}",
+                       lambda f=f: self.navigate_to(f)) for f in self.navigation_panel.favorites]
+        return commands
 
     def _focus_search(self):
         self.search_box.setFocus()
@@ -948,6 +1040,7 @@ class ModernExplorer(QMainWindow):
                            self.toggle_favorite_current)
             menu.addAction("Analyze Disk Usage", lambda: self.show_disk_usage(self.current_path))
             menu.addAction("Find Duplicates...", lambda: self.find_duplicates(self.current_path))
+            menu.addAction("Open Terminal Here", lambda: self.open_terminal_here(self.current_path))
             menu.addAction("Properties", lambda: self.show_properties(self.current_path))
             self._decorate_menu(menu)
             menu.exec(view.viewport().mapToGlobal(position))
@@ -964,6 +1057,7 @@ class ModernExplorer(QMainWindow):
             pin_action = menu.addAction("Unpin from Favorites" if pinned else "Pin to Favorites")
             menu.addAction("Analyze Disk Usage", lambda: self.show_disk_usage(paths[0]))
             menu.addAction("Find Duplicates...", lambda: self.find_duplicates(paths[0]))
+            menu.addAction("Open Terminal Here", lambda: self.open_terminal_here(paths[0]))
         menu.addSeparator()
         to_pane_action = move_to_pane_action = None
         if self.folder_pane.isVisible():
@@ -2045,6 +2139,7 @@ class ModernExplorer(QMainWindow):
             paste_action.setEnabled(bool(self._read_clipboard()[0]))
             menu.addAction("New Folder", self.create_new_folder)
             menu.addAction("Refresh", self.folder_pane.refresh)
+            menu.addAction("Open Terminal Here", lambda: self.open_terminal_here(self.folder_pane.current_path))
             menu.addSeparator()
             menu.addAction("Properties", lambda: self.show_properties(self.folder_pane.current_path))
         else:
