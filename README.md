@@ -17,8 +17,20 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
 - Rename in place with F2 or by clicking a selected item; only the name is selected, not the extension
 - Live filter (Ctrl+E): instantly show only the items in the current folder whose names match
 - Recent page in the sidebar: folders you visited and files you opened, newest first
-- Multi-threaded search with filters for date, size and file type
-  (prefix a search with `AllDrives:` to search every drive)
+- Multi-threaded search with a query language, autocompleted as you type
+  (prefix a search with `AllDrives:` to search every drive):
+
+  | Query | Finds |
+  | --- | --- |
+  | `report -draft` | names containing "report" but not "draft" (`"annual report"` for a phrase) |
+  | `*.py`, `IMG_????.jpg` | wildcard names |
+  | `kind:image` | image, video, audio, document, code, archive, pdf, program, folder, file |
+  | `ext:pdf`, `ext:jpg,png` | by extension |
+  | `size:>10MB`, `size:1MB..5MB`, `size:large` | by size (empty, tiny, small, medium, large, huge, gigantic) |
+  | `modified:thisweek`, `modified:>2024-03`, `modified:2024-01..2024-06` | by date modified |
+  | `content:"some text"` | text files containing the text (hover a result to see the line) |
+
+- Save any search to the sidebar (Save Search) and run it again with one click
 - Open with: pick a program (remembered per file type) or, on Windows, the system's app chooser;
   Send to: a zip, Desktop, Documents, a favorite, the other pane or any folder
 - Copy, cut, paste, rename and delete, using the system clipboard so it works with other file managers
@@ -104,6 +116,7 @@ shadows_explorer/
 │   ├── open_with.py        Open-with commands and remembered programs
 │   ├── recent.py           Recent files/folders and the live filter pattern
 │   ├── safety.py           Protected folders, open/delete checks, Recycle Bin
+│   ├── query.py            Search query language, content search, saved searches
 │   ├── search.py           Multi-threaded search engine and filters
 │   ├── terminal.py         Finds the terminal program to open in a folder
 │   └── utils.py            Paths, sizes, navigation history
@@ -117,6 +130,7 @@ shadows_explorer/
 │   ├── thumbnails.py       Background picture thumbnails
 │   ├── preview_pane.py     File preview panel
 │   ├── drives_view.py      "This PC" drive overview
+│   ├── search_box.py       Search box autocomplete and help
 │   ├── search_results_model.py
 │   ├── command_palette.py  The Ctrl+Shift+P command bar
 │   └── dialogs/            Properties, settings, bulk rename, disk usage and duplicates dialogs

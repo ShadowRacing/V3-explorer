@@ -7,11 +7,12 @@ pinned favorites, shortcuts to common locations, and drives.
 import os
 import platform
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu, QInputDialog, QMessageBox
 from PyQt6.QtCore import pyqtSignal, Qt, QStorageInfo, QSettings
 
 from shadows_explorer.ui.file_views import local_paths_from_mime, should_move
 from shadows_explorer.theme.icons import ui_icon
+from shadows_explorer.core.query import SavedSearches
 from shadows_explorer.core.utils import normalize_path, paths_equal
 
 
@@ -117,11 +118,13 @@ class NavigationPanel(QWidget):
         item_clicked: Emitted when a navigation item is clicked (id, path)
         files_dropped: Files were dropped on an item (paths, destination, is_move)
         open_in_new_tab: "Open in New Tab" was chosen for an item (path)
+        saved_search_clicked: A saved search should run (its dict: name, query, location)
     """
 
     item_clicked = pyqtSignal(str, str)  # id, path
     files_dropped = pyqtSignal(list, str, bool)
     open_in_new_tab = pyqtSignal(str)
+    saved_search_clicked = pyqtSignal(dict)
 
 
     def __init__(self, parent=None):
@@ -161,6 +164,22 @@ class NavigationPanel(QWidget):
         self.favorites_spacing.setFixedHeight(14)
         self.layout.addWidget(self.favorites_spacing)
 
+        # Saved searches section, hidden while empty
+        self.saved_searches = SavedSearches(self.settings)
+        self.saved_search_items = {}
+        self.searches_header = self._make_header("SAVED SEARCHES")
+        self.layout.addWidget(self.searches_header)
+        self.searches_container = QWidget()
+        self.searches_container.setObjectName("nav_container")
+        self.searches_layout = QVBoxLayout(self.searches_container)
+        self.searches_layout.setContentsMargins(0, 0, 0, 0)
+        self.searches_layout.setSpacing(2)
+        self.layout.addWidget(self.searches_container)
+        self.searches_spacing = QWidget()
+        self.searches_spacing.setObjectName("nav_container")
+        self.searches_spacing.setFixedHeight(14)
+        self.layout.addWidget(self.searches_spacing)
+
         self.header = self._make_header("LOCATIONS")
         self.layout.addWidget(self.header)
         self._add_standard_locations()
@@ -183,6 +202,7 @@ class NavigationPanel(QWidget):
 
         self.refresh_drives()
         self._load_favorites()
+        self._rebuild_saved_searches()
 
     def _make_header(self, text):
         header = QLabel(text)
@@ -198,7 +218,8 @@ class NavigationPanel(QWidget):
                                            color).pixmap(14, 14))
 
     def _all_items(self):
-        return list(self.items.values()) + list(self.drive_items.values()) + list(self.favorite_items.values())
+        return (list(self.items.values()) + list(self.drive_items.values()) + list(self.favorite_items.values())
+                + list(self.saved_search_items.values()))
 
     def _make_item(self, item_id, label, path, icon_name, indent=0):
         """Create a NavItem wired to this panel's signals."""
@@ -399,6 +420,57 @@ class NavigationPanel(QWidget):
         else:
             menu.addAction("Pin to Favorites", lambda: self.add_favorite(path))
         menu.exec(global_pos)
+
+    # -------------------------- Saved searches --------------------------
+
+    def save_search(self, name, query, location):
+        """Save a search (location "" means all drives) and show it in the sidebar."""
+        self.saved_searches.add(name, query, location)
+        self._rebuild_saved_searches()
+
+    def _rebuild_saved_searches(self):
+        for widget in self.saved_search_items.values():
+            self.searches_layout.removeWidget(widget)
+            widget.deleteLater()
+        self.saved_search_items.clear()
+
+        for search in self.saved_searches.items:
+            item = NavItem(f"search_{search['name']}", search["name"], "", "search")
+            item.set_icon_color(self.icon_color)
+            where = search["location"] or "all drives"
+            item.text_label.setToolTip(f"{search['query']}\nin {where}")
+            item.clicked.connect(lambda _id, _path, s=search: self.saved_search_clicked.emit(dict(s)))
+            item.context_menu_requested.connect(
+                lambda _id, _path, pos, s=search: self._show_saved_search_menu(s, pos))
+            self.searches_layout.addWidget(item)
+            self.saved_search_items[search["name"]] = item
+
+        has_searches = bool(self.saved_searches.items)
+        self.searches_header.setVisible(has_searches)
+        self.searches_container.setVisible(has_searches)
+        self.searches_spacing.setVisible(has_searches)
+
+    def _show_saved_search_menu(self, search, global_pos):
+        menu = QMenu(self)
+        menu.addAction("Run Search", lambda: self.saved_search_clicked.emit(dict(search)))
+        menu.addAction("Rename...", lambda: self._rename_saved_search(search["name"]))
+        menu.addSeparator()
+        menu.addAction("Remove", lambda: self.remove_saved_search(search["name"]))
+        menu.exec(global_pos)
+
+    def _rename_saved_search(self, name):
+        new_name, ok = QInputDialog.getText(self, "Rename Saved Search", "Name:", text=name)
+        new_name = new_name.strip()
+        if ok and new_name and new_name != name:
+            if not self.saved_searches.rename(name, new_name):
+                QMessageBox.warning(self, "Rename Saved Search",
+                                    f"There is already a saved search called \"{new_name}\".")
+                return
+            self._rebuild_saved_searches()
+
+    def remove_saved_search(self, name):
+        self.saved_searches.remove(name)
+        self._rebuild_saved_searches()
 
     # -------------------------- Selection --------------------------
 

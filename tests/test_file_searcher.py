@@ -87,3 +87,23 @@ def test_new_search_gets_new_id(qapp, tmp_path):
     while searcher.is_running and time.time() < deadline:
         time.sleep(0.01)
     assert not searcher.is_running
+
+
+def test_filter_only_and_content_queries(qapp, tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "plan.txt").write_text("step one\nthe launch date is friday\n")
+    (tmp_path / "other.txt").write_text("nothing here")
+    (tmp_path / "big.bin").write_bytes(b"\0" * 5000)
+    (tmp_path / "pic.png").write_bytes(b"x")
+
+    searcher = FileSearcher()
+    searcher.configure_search(str(tmp_path), "size:>1KB")
+    assert [r.filename for r in _run_search(searcher)] == ["big.bin"]
+
+    searcher.configure_search(str(tmp_path), 'kind:text content:"launch date"')
+    results = _run_search(searcher)
+    assert [(r.filename, r.snippet) for r in results] == [("plan.txt", "the launch date is friday")]
+
+    # The Advanced Search dialog's "Containing text" option works the same way
+    searcher.configure_search(str(tmp_path), "*.txt", {"content": "NOTHING"})
+    assert [r.filename for r in _run_search(searcher)] == ["other.txt"]
