@@ -29,8 +29,12 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
   | `size:>10MB`, `size:1MB..5MB`, `size:large` | by size (empty, tiny, small, medium, large, huge, gigantic) |
   | `modified:thisweek`, `modified:>2024-03`, `modified:2024-01..2024-06` | by date modified |
   | `content:"some text"` | text files containing the text (hover a result to see the line) |
+  | `tag:red`, `-tag:done` | items with (or without) a tag |
 
 - Save any search to the sidebar (Save Search) and run it again with one click
+- Tags and color labels on any file or folder (right-click → Tags, Ctrl+1…9, or drop files on a tag
+  in the sidebar): colored dots next to names, a page per tag listing everything tagged, Group by Tag,
+  and your own tags with any color. Tags follow items you move or rename in the app
 - Open with: pick a program (remembered per file type) or, on Windows, the system's app chooser;
   Send to: a zip, Desktop, Documents, a favorite, the other pane or any folder
 - Copy, cut, paste, rename and delete, using the system clipboard so it works with other file managers
@@ -96,6 +100,7 @@ shadows-explorer                  # same as: python -m shadows_explorer
 | Ctrl+Shift+D | Show or hide the second pane |
 | Ctrl+Shift+P | Command bar: search and run any command |
 | Ctrl+` | Open a terminal in the current folder |
+| Ctrl+1 … Ctrl+9 / Ctrl+0 | Toggle the first nine tags on the selection / remove all its tags |
 
 ## Project layout
 
@@ -118,6 +123,7 @@ shadows_explorer/
 │   ├── safety.py           Protected folders, open/delete checks, Recycle Bin
 │   ├── query.py            Search query language, content search, saved searches
 │   ├── search.py           Multi-threaded search engine and filters
+│   ├── tags.py             Tags and colors, kept in the app's data folder
 │   ├── terminal.py         Finds the terminal program to open in a folder
 │   └── utils.py            Paths, sizes, navigation history
 ├── ui/                     Windows, views and panes
@@ -132,6 +138,7 @@ shadows_explorer/
 │   ├── drives_view.py      "This PC" drive overview
 │   ├── search_box.py       Search box autocomplete and help
 │   ├── search_results_model.py
+│   ├── tags.py             Tag dots, the Tags menu and the tag dialog
 │   ├── command_palette.py  The Ctrl+Shift+P command bar
 │   └── dialogs/            Properties, settings, bulk rename, disk usage and duplicates dialogs
 └── theme/

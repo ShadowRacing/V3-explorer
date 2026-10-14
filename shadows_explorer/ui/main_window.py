@@ -50,6 +50,8 @@ from shadows_explorer.ui.preview_pane import PreviewPane
 from shadows_explorer.core.search import FileSearcher
 from shadows_explorer.core.query import QueryError, parse_query
 from shadows_explorer.ui.search_box import SEARCH_HELP, QueryCompleter
+from shadows_explorer.core.tags import TagStore
+from shadows_explorer.ui.tags import TagDialog, TagDotsDelegate, add_tags_submenu, tag_dot_icon
 from shadows_explorer.ui.search_results_model import SearchResultsModel, PATH_ROLE
 from shadows_explorer.ui.dialogs.settings import SettingsDialog
 from shadows_explorer.ui.dialogs.properties import PropertiesDialog
@@ -71,7 +73,7 @@ VIEW_ICONS, VIEW_LIST, VIEW_DETAILS = range(3)
 # QFileSystemModel column for each sort key
 SORT_COLUMNS = {"name": 0, "size": 1, "type": 2, "date": 3}
 SORT_LABELS = {"name": "Name", "date": "Date modified", "size": "Size", "type": "Type"}
-GROUP_LABELS = {"none": "(None)", "type": "Type", "date": "Date modified", "size": "Size"}
+GROUP_LABELS = {"none": "(None)", "type": "Type", "date": "Date modified", "size": "Size", "tag": "Tag"}
 
 # Locations that are pages rather than folders: id -> title
 SPECIAL_LOCATIONS = {"pc": "This PC", "recent": "Recent"}
@@ -149,14 +151,21 @@ class ModernExplorer(QMainWindow):
         self.recent = RecentItems(self.settings)
         self.program_history = ProgramHistory(self.settings)
 
+        # Tags, kept in the app's data folder and shown as colored dots
+        data_folder = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+        self.tag_store = TagStore(os.path.join(data_folder, "tags.json") if data_folder else None)
+        self.current_tag = None
+
         # Models
         self.file_model = self._create_file_model()
+        self.file_model.tag_store = self.tag_store
         self.file_model.fileRenamed.connect(self._on_renamed_in_place)
         self.file_model.rename_failed.connect(self._on_rename_failed)
         self.search_results_model = SearchResultsModel(self)
 
         # Search state
         self.file_searcher = FileSearcher(self)
+        self.file_searcher.tag_lookup = lambda path: [t.lower() for t in self.tag_store.tags_for(path)]
         self.is_searching = False
         self.search_options = None
         self.search_start_time = 0
@@ -174,6 +183,7 @@ class ModernExplorer(QMainWindow):
         self._connect_search_signals()
         self._setup_shortcuts()
         self._restore_settings()
+        self._tags_changed()  # Fill the sidebar's TAGS section
 
         self.apply_theme(self.theme_manager.current_theme)
 
@@ -446,6 +456,9 @@ class ModernExplorer(QMainWindow):
         self.navigation_panel.files_dropped.connect(self.transfer_files)
         self.navigation_panel.open_in_new_tab.connect(self.new_tab)
         self.navigation_panel.saved_search_clicked.connect(self.run_saved_search)
+        self.navigation_panel.tag_clicked.connect(self.show_tag_view)
+        self.navigation_panel.tag_menu_requested.connect(self._show_tag_menu)
+        self.navigation_panel.files_tagged.connect(self._tag_dropped_files)
 
         # Scrollable, so long favorites and drive lists still fit
         sidebar_scroll = QScrollArea()
@@ -581,6 +594,7 @@ class ModernExplorer(QMainWindow):
         self.grouped_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.grouped_view.customContextMenuRequested.connect(self._grouped_context_menu)
         self.grouped_view.selectionModel().selectionChanged.connect(self.on_file_selection_changed)
+        self.grouped_view.setItemDelegateForColumn(0, TagDotsDelegate(self.grouped_view, self._tag_colors_at))
         self.group_watcher = QFileSystemWatcher(self)
         self.group_refresh_timer = QTimer(self)
         self.group_refresh_timer.setSingleShot(True)
@@ -604,6 +618,7 @@ class ModernExplorer(QMainWindow):
         self.search_view.setColumnWidth(0, 250)
         self.search_view.setColumnWidth(1, 350)
         self.search_view.selectionModel().selectionChanged.connect(self.on_search_selection_changed)
+        self.search_view.setItemDelegateForColumn(0, TagDotsDelegate(self.search_view, self._tag_colors_at))
 
         # Drives view
         self.drives_view = DrivesView()
@@ -628,6 +643,7 @@ class ModernExplorer(QMainWindow):
         self.folder_pane.selection_changed.connect(self._preview_selection)
         self.folder_pane.close_requested.connect(lambda: self.set_dual_pane_visible(False))
         self.folder_pane.model.fileRenamed.connect(self._on_renamed_in_place)
+        self.folder_pane.model.tag_store = self.tag_store
         self.folder_pane.model.rename_failed.connect(self._on_rename_failed)
         self.folder_pane.path_not_found.connect(
             lambda path: QMessageBox.warning(self, "Path Not Found", f"Folder not found: {path}"))
@@ -732,7 +748,10 @@ class ModernExplorer(QMainWindow):
             ("Ctrl+Shift+D", lambda: self.set_dual_pane_visible(not self.folder_pane.isVisible())),
             ("Ctrl+Shift+P", self.show_command_palette),
             ("Ctrl+`", lambda: self.open_terminal_here()),
+            ("Ctrl+0", self.clear_tags),
         ]
+        # Ctrl+1 ... Ctrl+9 toggle the first nine tags on the selection
+        shortcuts += [(f"Ctrl+{n}", lambda n=n: self.toggle_tag_number(n)) for n in range(1, 10)]
         for key, slot in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
             shortcut.activated.connect(slot)
@@ -824,6 +843,14 @@ class ModernExplorer(QMainWindow):
                        lambda f=f: self.navigate_to(f)) for f in self.navigation_panel.favorites]
         commands += [C(f"Saved Search: {search['name']}", lambda s=search: self.run_saved_search(s))
                      for search in self.navigation_panel.saved_searches.items]
+        tag_counts = self.tag_store.counts()
+        commands += [C(f"Tag: {name}", lambda n=name: self.toggle_tag(n, selection),
+                       f"Ctrl+{number}" if number <= 9 else "", bool(selection))
+                     for number, name in enumerate(self.tag_store.tags, 1)]
+        commands += [C(f"Show Tag: {name}", lambda n=name: self.show_tag_view(n))
+                     for name, count in tag_counts.items() if count]
+        commands += [C("New Tag...", lambda: self.new_tag(selection)),
+                     C("Remove All Tags", lambda: self.clear_tags(selection), "Ctrl+0", bool(selection))]
         return commands
 
     def _focus_search(self):
@@ -917,7 +944,7 @@ class ModernExplorer(QMainWindow):
             return self.folder_pane.selected_paths()
         if self.current_view == "search":
             return self.get_selected_search_paths()
-        if self.current_view in ("files", "recent"):
+        if self.current_view in ("files", "recent", "tag"):
             return self.get_selected_file_paths()
         return []
 
@@ -991,6 +1018,7 @@ class ModernExplorer(QMainWindow):
         new_tab_action = menu.addAction("Open in New Tab")
         new_tab_action.setEnabled(os.path.isdir(paths[0]))
         self._add_open_with_send_to(menu, paths)
+        self._add_tags_menu(menu, paths)
         menu.addSeparator()
         cut_action = menu.addAction("Cut")
         copy_action = menu.addAction("Copy")
@@ -1082,6 +1110,7 @@ class ModernExplorer(QMainWindow):
         copy_path_action = menu.addAction("Copy as Path")
         menu.addSeparator()
         self._add_open_with_send_to(menu, paths)
+        self._add_tags_menu(menu, paths)
         menu.addSeparator()
         compress_action = menu.addAction("Compress to ZIP")
         extract_action = extract_to_action = None
@@ -1272,6 +1301,7 @@ class ModernExplorer(QMainWindow):
             QMessageBox.warning(self, "Delete Errors", "Errors occurred during deletion:\n\n" + "\n".join(errors))
 
         deleted = sum(1 for p in paths if not os.path.exists(p))
+        self._forget_tags([p for p in paths if not os.path.exists(p)])
         self._remove_missing_search_results()
         self.update_status()
         self.status_label.setText(f"Deleted {deleted} of {len(paths)} items")
@@ -1873,6 +1903,8 @@ class ModernExplorer(QMainWindow):
             items: List of (source, target) path pairs
         """
         self.operation_history.append({'type': op_type, 'items': items, 'timestamp': time.time()})
+        if op_type in ('move', 'rename'):
+            self._move_tags(items)
         del self.operation_history[:-MAX_UNDO_HISTORY]
         self._update_undo_button()
 
@@ -1935,6 +1967,11 @@ class ModernExplorer(QMainWindow):
                 except (OSError, shutil.Error) as e:
                     errors.append(f"'{os.path.basename(target)}': {e}")
 
+        if op['type'] in ('move', 'rename'):
+            # Tags go back with the items that were restored
+            self._move_tags([(target, source) for source, target in op['items']
+                             if (os.path.exists(source) and not os.path.exists(target))
+                             or paths_equal(source, target)])
         if errors:
             self._show_errors(f"Some items could not be restored while undoing the {op['type']}:", errors)
         self.status_label.setText(f"Undid {op['type']} operation")
@@ -2018,6 +2055,7 @@ class ModernExplorer(QMainWindow):
                     except OSError:
                         still_failed.append(path)
                 failed = still_failed
+        self._forget_tags([p for p in paths if not os.path.exists(p)])
         self._remove_missing_search_results()
         self.update_status()
         return failed
@@ -2062,7 +2100,8 @@ class ModernExplorer(QMainWindow):
             self.status_label.setText(f"Error reading directory: {e}")
             entries = []
         entries = [e for e in entries if self._matches_filter(e.name)]
-        groups = group_entries(sort_entries(entries, self.sort_key, self.sort_descending), self.group_mode)
+        groups = group_entries(sort_entries(entries, self.sort_key, self.sort_descending), self.group_mode,
+                               tags_of=self.tag_store.tags_for, tag_order=list(self.tag_store.tags))
         self.grouped_view.populate(groups)
         watched = self.group_watcher.directories()
         if watched != [self.current_path]:
@@ -2166,6 +2205,7 @@ class ModernExplorer(QMainWindow):
             menu.addAction("Copy to Other Pane", lambda: self.send_to_other_pane(paths, True, False)).setEnabled(other)
             menu.addAction("Move to Other Pane", lambda: self.send_to_other_pane(paths, True, True)).setEnabled(other)
             self._add_open_with_send_to(menu, paths, from_pane=True)
+            self._add_tags_menu(menu, paths)
             menu.addSeparator()
             menu.addAction("Cut", lambda: self.cut_selected_files(paths))
             menu.addAction("Copy", lambda: self.copy_selected_files(paths))
@@ -2259,14 +2299,167 @@ class ModernExplorer(QMainWindow):
         index = self.tab_bar.currentIndex()
         if index >= 0:
             self.tab_bar.setTabText(index, title)
-            self.tab_bar.setTabToolTip(index, SPECIAL_LOCATIONS.get(location, location))
+            tooltip = f"Tag: {location[4:]}" if location.startswith("tag:") else location
+            self.tab_bar.setTabToolTip(index, SPECIAL_LOCATIONS.get(location, tooltip))
             self.tab_bar.setTabIcon(index, self._location_icon(location))
 
     def _location_icon(self, location):
         """Tab icon: a computer for This PC, a clock for Recent, otherwise a folder."""
         if location in SPECIAL_LOCATIONS:
             return ui_icon(location, self.icon_color)
+        if location.startswith("tag:") and location[4:] in self.tag_store.tags:
+            return tag_dot_icon(self.tag_store.tags[location[4:]])
         return file_type_icon("folder")
+
+    # -------------------------- Tags --------------------------
+
+    def _move_tags(self, pairs):
+        if self.tag_store.items:
+            self.tag_store.move(pairs)
+            self._tags_changed()
+
+    def _forget_tags(self, paths):
+        if paths and self.tag_store.items:
+            self.tag_store.forget(paths)
+            self._tags_changed()
+
+    def _tag_colors_at(self, index):
+        """Tag colors for a row of the grouped or search list (they store the path)."""
+        path = index.siblingAtColumn(0).data(PATH_ROLE)
+        return self.tag_store.colors_for(path) if path else []
+
+    def _add_tags_menu(self, menu, paths):
+        add_tags_submenu(menu, paths, self.tag_store, self._tags_changed, self.new_tag)
+
+    def new_tag(self, paths=()):
+        """Ask for a new tag's name and color, and put it on paths. Returns the tag name or None."""
+        dialog = TagDialog("New Tag", parent=self)
+        while dialog.exec():
+            name, color = dialog.values()
+            if self.tag_store.create_tag(name, color):
+                if paths:
+                    self.tag_store.set_tag(paths, name)
+                self._tags_changed()
+                return name
+            QMessageBox.warning(self, "New Tag", f"There is already a tag called \"{self.tag_store.find_tag(name)}\".")
+        return None
+
+    def toggle_tag(self, name, paths=None):
+        """Add a tag to the selection, or remove it if every selected item has it."""
+        paths = paths if paths is not None else self.selected_paths()
+        if not paths:
+            return
+        on = self.tag_store.toggle_tag(paths, name)
+        self._tags_changed()
+        count = f"{len(paths)} items" if len(paths) > 1 else f"'{os.path.basename(os.path.normpath(paths[0]))}'"
+        self.status_label.setText(f"{'Tagged' if on else 'Removed tag'} {name} {'on' if on else 'from'} {count}")
+
+    def toggle_tag_number(self, number):
+        """Ctrl+1 ... Ctrl+9: toggle the tag at that position."""
+        names = list(self.tag_store.tags)
+        if number <= len(names):
+            self.toggle_tag(names[number - 1])
+
+    def clear_tags(self, paths=None):
+        """Ctrl+0: remove every tag from the selection."""
+        paths = paths if paths is not None else self.selected_paths()
+        if paths:
+            self.tag_store.clear(paths)
+            self._tags_changed()
+            self.status_label.setText(f"Removed all tags from {len(paths)} item{'s' if len(paths) != 1 else ''}")
+
+    def _tag_dropped_files(self, paths, name):
+        self.tag_store.set_tag(paths, name)
+        self._tags_changed()
+        self.status_label.setText(f"Tagged {len(paths)} item{'s' if len(paths) != 1 else ''} {name}")
+
+    def _untag_from_view(self, paths):
+        self.tag_store.set_tag(paths, self.current_tag, on=False)
+        self._tags_changed()
+
+    def _tags_changed(self):
+        """Update the sidebar, tag dots and tag-based lists after tags changed."""
+        counts = self.tag_store.counts()
+        self.navigation_panel.set_tags([(name, color, counts[name]) for name, color in self.tag_store.tags.items()
+                                        if counts[name]])
+        for view in (self.file_view, self.detail_view, self.grouped_view, self.search_view, self.folder_pane.view):
+            view.viewport().update()
+        if self.current_view == "tag":
+            if self.current_tag in self.tag_store.tags:
+                self.show_tag_view(self.current_tag, add_to_history=False)
+            else:
+                self.navigate_to(self.current_path)  # The tag was deleted
+        elif self.group_mode == "tag" and self.current_view == "files":
+            self._refresh_grouped()
+
+    def show_tag_view(self, name, add_to_history=True):
+        """List everything tagged name, wherever it is."""
+        if name not in self.tag_store.tags:
+            QMessageBox.warning(self, "Tags", f"There is no tag called \"{name}\" any more.")
+            return
+        if self.is_searching:
+            self._exit_search_mode()
+        if add_to_history:
+            self.history.visit(f"tag:{name}")
+        self.current_view = "tag"
+        self.current_tag = name
+        entries = [e for e in (self._entry_for(path) for path in self.tag_store.paths_with(name)) if e]
+        self.grouped_view.populate(group_entries(sort_entries(entries, self.sort_key, self.sort_descending), "type"))
+        self.views_stack.setCurrentWidget(self.grouped_view)
+
+        self.setWindowTitle(f"{name} - Shadows File Explorer")
+        self._set_tab_title(name, f"tag:{name}")
+        self.breadcrumb_bar.set_path(f"Tag: {name}")
+        self.navigation_panel.set_active_item(f"tag_{name}")
+        self._update_nav_buttons()
+        self.preview_pane.clear_preview()
+        self.filter_box.setEnabled(False)
+        self.status_label.setText(f"{len(entries)} item{'s' if len(entries) != 1 else ''} tagged {name}" if entries
+                                  else f"Nothing tagged {name} is left (moved or deleted outside the app?)")
+
+    def _show_tag_menu(self, name, global_pos):
+        """Right-click on a tag in the sidebar."""
+        menu = QMenu(self)
+        menu.addAction("Show Tagged Items", lambda: self.show_tag_view(name))
+        menu.addAction("Search for This Tag Here", lambda: self._search_for_tag(name)).setEnabled(
+            self.current_view == "files")
+        menu.addSeparator()
+        menu.addAction("Edit Tag...", lambda: self.edit_tag(name))
+        menu.addAction("New Tag...", self.new_tag)
+        menu.addAction("Delete Tag", lambda: self.delete_tag(name))
+        menu.addSeparator()
+        menu.addAction("Forget Items That No Longer Exist", self._prune_tags)
+        menu.exec(global_pos)
+
+    def _search_for_tag(self, name):
+        self.search_box.setText(f'tag:"{name}"' if " " in name else f"tag:{name}")
+        self.search_files()
+
+    def edit_tag(self, name):
+        dialog = TagDialog("Edit Tag", name, self.tag_store.tags.get(name), self)
+        while dialog.exec():
+            new_name, color = dialog.values()
+            if self.tag_store.rename_tag(name, new_name):
+                self.tag_store.set_color(new_name, color)
+                if self.current_tag == name:
+                    self.current_tag = new_name
+                self._tags_changed()
+                return
+            QMessageBox.warning(self, "Edit Tag", f"There is already a tag called \"{new_name}\".")
+
+    def delete_tag(self, name):
+        count = self.tag_store.counts().get(name, 0)
+        answer = QMessageBox.question(
+            self, "Delete Tag", f"Delete the tag \"{name}\"? It is removed from {count} item(s); "
+                                f"the files themselves are not touched.")
+        if answer == QMessageBox.StandardButton.Yes:
+            self.tag_store.delete_tag(name)
+            self._tags_changed()
+
+    def _prune_tags(self):
+        removed = self.tag_store.prune_missing()
+        self._tags_changed()
+        self.status_label.setText(f"Forgot {removed} tagged item{'s' if removed != 1 else ''} that no longer exist")
 
     # -------------------------- Favorites --------------------------
 
@@ -2439,8 +2632,8 @@ class ModernExplorer(QMainWindow):
                      0 if is_dir else stats.st_size, stats.st_mtime)
 
     def _grouped_context_menu(self, position):
-        """Right-click in the grouped list: the Recent page has its own menu."""
-        if self.current_view == "recent":
+        """Right-click in the grouped list: the Recent and tag pages have their own menu."""
+        if self.current_view in ("recent", "tag"):
             self.show_recent_context_menu(position)
         else:
             self.show_context_menu(position, self.grouped_view)
@@ -2460,11 +2653,17 @@ class ModernExplorer(QMainWindow):
             menu.addAction("Copy", lambda: self.copy_selected_files(paths))
             menu.addAction("Copy as Path", lambda: QApplication.clipboard().setText("\n".join(paths)))
             self._add_open_with_send_to(menu, paths)
-            menu.addAction("Remove from Recent", lambda: self._forget_recent(paths))
+            self._add_tags_menu(menu, paths)
+            if self.current_view == "tag":
+                menu.addAction(f"Remove Tag \"{self.current_tag}\"", lambda: self._untag_from_view(paths))
+            else:
+                menu.addAction("Remove from Recent", lambda: self._forget_recent(paths))
             menu.addSeparator()
             menu.addAction("Properties", lambda: self.show_properties(paths[0])).setEnabled(len(paths) == 1)
-        else:
+        elif self.current_view == "recent":
             menu.addAction("Clear Recent Items", self._clear_recent)
+        else:
+            return
         self._decorate_menu(menu)
         menu.exec(view.viewport().mapToGlobal(position))
 
@@ -2516,6 +2715,9 @@ class ModernExplorer(QMainWindow):
         if path == "recent":
             self.show_recent_view()
             return
+        if path and path.startswith("tag:"):
+            self.show_tag_view(path[len("tag:"):])
+            return
         if not path:
             return
 
@@ -2564,6 +2766,8 @@ class ModernExplorer(QMainWindow):
             self.show_drives_view(add_to_history=False)
         elif path == "recent":
             self.show_recent_view(add_to_history=False)
+        elif path.startswith("tag:"):
+            self.show_tag_view(path[len("tag:"):], add_to_history=False)
         elif os.path.isdir(path):
             self._show_directory(path)
         else:
@@ -2618,6 +2822,8 @@ class ModernExplorer(QMainWindow):
             self.drives_view.load_drives()
         elif self.current_view == "recent":
             self.show_recent_view(add_to_history=False)
+        elif self.current_view == "tag":
+            self.show_tag_view(self.current_tag, add_to_history=False)
         else:
             self.file_model.clear_folder_sizes()
             self._show_directory(self.current_path)

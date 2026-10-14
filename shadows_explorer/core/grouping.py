@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 from shadows_explorer.core.file_types import file_kind
 
 SORT_KEYS = ("name", "date", "size", "type")
-GROUP_MODES = ("none", "type", "date", "size")
+GROUP_MODES = ("none", "type", "date", "size", "tag")
 
 TYPE_GROUP_NAMES = {
     "folder": "Folders", "text": "Documents", "pdf": "Documents", "spreadsheet": "Documents",
@@ -109,13 +109,16 @@ def size_group(entry):
     return SIZE_GROUPS[-1][1]
 
 
-def group_entries(entries, mode, today=None):
+def group_entries(entries, mode, today=None, tags_of=None, tag_order=()):
     """Split (already sorted) entries into ordered groups.
 
     Args:
         entries: Entry objects, in the order they should appear in each group
         mode: One of GROUP_MODES
         today: Date to treat as today (for tests)
+        tags_of: For "tag" grouping, callable(path) -> tag names; an item with
+            several tags is listed under each of them
+        tag_order: Tag names in the order their groups should appear
 
     Returns:
         list: (group name, [entries]) pairs, empty groups left out
@@ -131,6 +134,13 @@ def group_entries(entries, mode, today=None):
     elif mode == "size":
         name_of = size_group
         order = ["Folders"] + [name for _, name in SIZE_GROUPS]
+    elif mode == "tag":
+        groups = {}
+        for entry in entries:
+            for name in (tags_of(entry.path) if tags_of else []) or ["No tags"]:
+                groups.setdefault(name, []).append(entry)
+        order = list(tag_order) + ["No tags"]
+        return [(name, groups[name]) for name in order if name in groups]
     else:
         raise ValueError(f"Unknown group mode: {mode}")
 

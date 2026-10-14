@@ -17,6 +17,7 @@ SEARCH_HELP = """<b>Search tips</b> (combine any of these):<br>
 <code>size:&gt;10MB</code> &nbsp; <code>size:1MB..5MB</code> &nbsp; <code>size:large</code><br>
 <code>modified:today</code> thisweek, lastmonth, 2024, &gt;2024-03-01<br>
 <code>content:"some text"</code> text inside files<br>
+<code>tag:red</code> tagged items (right-click files, Tags)<br>
 <code>alldrives: ...</code> search every drive"""
 
 

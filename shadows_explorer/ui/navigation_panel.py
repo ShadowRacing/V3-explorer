@@ -13,6 +13,7 @@ from PyQt6.QtCore import pyqtSignal, Qt, QStorageInfo, QSettings
 from shadows_explorer.ui.file_views import local_paths_from_mime, should_move
 from shadows_explorer.theme.icons import ui_icon
 from shadows_explorer.core.query import SavedSearches
+from shadows_explorer.ui.tags import tag_dot_icon
 from shadows_explorer.core.utils import normalize_path, paths_equal
 
 
@@ -104,6 +105,46 @@ class NavItem(QWidget):
         self.files_dropped.emit(paths, self.path, is_move)
 
 
+class TagNavItem(NavItem):
+    """Sidebar entry for a tag: a colored dot, and dropping files on it tags them.
+
+    Signals:
+        files_tagged: Files were dropped on the tag (paths, tag name)
+    """
+
+    files_tagged = pyqtSignal(list, str)
+
+    def __init__(self, name, color, count, parent=None):
+        super().__init__(f"tag_{name}", name, "", "", parent=parent)
+        self.tag_name = name
+        self.color = color
+        self.text_label.setToolTip(f"{count} tagged item{'s' if count != 1 else ''}. "
+                                   f"Drop files here to tag them.")
+        self.setAcceptDrops(True)
+
+    def set_icon_color(self, color):
+        self.icon_label.setPixmap(tag_dot_icon(self.color, 18).pixmap(18, 18))
+
+    def dragEnterEvent(self, event):
+        if local_paths_from_mime(event.mimeData()):
+            event.setDropAction(Qt.DropAction.LinkAction)
+            event.accept()
+            self.set_flag("dropTarget", True)
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        self.set_flag("dropTarget", False)
+        paths = local_paths_from_mime(event.mimeData())
+        if not paths:
+            event.ignore()
+            return
+        # Link, not move or copy: the files stay where they are
+        event.setDropAction(Qt.DropAction.LinkAction)
+        event.accept()
+        self.files_tagged.emit(paths, self.tag_name)
+
+
 class NavigationPanel(QWidget):
     """Modern navigation panel with icons and labels.
 
@@ -125,6 +166,9 @@ class NavigationPanel(QWidget):
     files_dropped = pyqtSignal(list, str, bool)
     open_in_new_tab = pyqtSignal(str)
     saved_search_clicked = pyqtSignal(dict)
+    tag_clicked = pyqtSignal(str)
+    tag_menu_requested = pyqtSignal(str, object)  # tag name, global position
+    files_tagged = pyqtSignal(list, str)  # paths, tag name
 
 
     def __init__(self, parent=None):
@@ -180,6 +224,23 @@ class NavigationPanel(QWidget):
         self.searches_spacing.setFixedHeight(14)
         self.layout.addWidget(self.searches_spacing)
 
+        # Tags in use, hidden while nothing is tagged
+        self.tag_items = {}
+        self.tags_header = self._make_header("TAGS")
+        self.tags_header.setToolTip("Right-click files and choose Tags, or drop files on a tag")
+        self.layout.addWidget(self.tags_header)
+        self.tags_container = QWidget()
+        self.tags_container.setObjectName("nav_container")
+        self.tags_layout = QVBoxLayout(self.tags_container)
+        self.tags_layout.setContentsMargins(0, 0, 0, 0)
+        self.tags_layout.setSpacing(2)
+        self.layout.addWidget(self.tags_container)
+        self.tags_spacing = QWidget()
+        self.tags_spacing.setObjectName("nav_container")
+        self.tags_spacing.setFixedHeight(14)
+        self.layout.addWidget(self.tags_spacing)
+        self.set_tags([])
+
         self.header = self._make_header("LOCATIONS")
         self.layout.addWidget(self.header)
         self._add_standard_locations()
@@ -219,7 +280,7 @@ class NavigationPanel(QWidget):
 
     def _all_items(self):
         return (list(self.items.values()) + list(self.drive_items.values()) + list(self.favorite_items.values())
-                + list(self.saved_search_items.values()))
+                + list(self.saved_search_items.values()) + list(self.tag_items.values()))
 
     def _make_item(self, item_id, label, path, icon_name, indent=0):
         """Create a NavItem wired to this panel's signals."""
@@ -472,13 +533,37 @@ class NavigationPanel(QWidget):
         self.saved_searches.remove(name)
         self._rebuild_saved_searches()
 
+    # -------------------------- Tags --------------------------
+
+    def set_tags(self, tags):
+        """Show tags as (name, color, number of tagged items) in the TAGS section."""
+        for widget in self.tag_items.values():
+            self.tags_layout.removeWidget(widget)
+            widget.deleteLater()
+        self.tag_items.clear()
+
+        for name, color, count in tags:
+            item = TagNavItem(name, color, count)
+            item.set_icon_color(self.icon_color)
+            item.clicked.connect(lambda item_id, _path, n=name: (self._highlight(item_id), self.tag_clicked.emit(n)))
+            item.context_menu_requested.connect(lambda _id, _path, pos, n=name: self.tag_menu_requested.emit(n, pos))
+            item.files_tagged.connect(self.files_tagged.emit)
+            self.tags_layout.addWidget(item)
+            self.tag_items[item.item_id] = item
+
+        for widget in (self.tags_header, self.tags_container, self.tags_spacing):
+            widget.setVisible(bool(tags))
+        if self.active_item and self.active_item.startswith("tag_"):
+            self._highlight(self.active_item if self.active_item in self.tag_items else None)
+
     # -------------------------- Selection --------------------------
 
     def _widget_for(self, item_id):
         """Return the widget for a navigation item id, or None."""
         if not item_id:
             return None
-        return self.drive_items.get(item_id) or self.favorite_items.get(item_id) or self.items.get(item_id)
+        return (self.drive_items.get(item_id) or self.favorite_items.get(item_id) or self.items.get(item_id)
+                or self.tag_items.get(item_id))
 
     def _highlight(self, item_id):
         """Visually mark item_id as the active item without navigating."""
