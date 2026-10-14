@@ -87,6 +87,8 @@ NavItem[dropTarget="true"] {{ background-color: {selected}; border: 1px dashed {
 
 /* ---- Content ---- */
 QFrame#content, PreviewPane {{ background-color: {bg}; }}
+QWidget#folder_pane {{ background-color: {bg}; border-left: 1px solid {border}; }}
+QWidget#folder_pane[active="true"], QFrame#content[active="true"] {{ border-top: 2px solid {accent}; }}
 PreviewPane {{ border-left: 1px solid {border}; }}
 QLabel#preview_title {{ font-weight: 600; font-size: 14px; }}
 QLabel#preview_name {{ font-weight: 600; font-size: 14px; }}

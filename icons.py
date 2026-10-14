@@ -62,6 +62,8 @@ UI_ICONS = {
                '<path d="M10 13h4"/>',
     "extract": '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/>'
                '<path d="M12 11v6M9.5 14.5L12 17l2.5-2.5"/>',
+    "dual": '<rect x="3" y="5" width="8" height="14" rx="1.5"/><rect x="13" y="5" width="8" height="14" rx="1.5"/>',
+    "copy_to": '<rect x="3" y="5" width="8" height="14" rx="1.5"/><path d="M14 12h7M18 9l3 3-3 3"/>',
     "hidden": '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
 }
 

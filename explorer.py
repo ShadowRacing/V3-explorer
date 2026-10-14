@@ -30,6 +30,7 @@ from archive_ops import (ArchiveCancelled, archive_stem, archive_top_level_names
 from background import BackgroundJob
 from bulk_rename import execute_renames
 from bulk_rename_dialog import BulkRenameDialog
+from dual_pane import FolderPane
 from breadcrumb_bar import FixedBreadcrumbBar
 from drive_components import DrivesView
 from preview_pane import PreviewPane
@@ -62,6 +63,7 @@ MENU_ICONS = {
     "Pin This Folder to Favorites": "star", "Unpin This Folder": "star",
     "Icons": "view_icons", "List": "view_list", "Details": "view_details", "Hidden files": "hidden",
     "Compress to ZIP": "archive", "Extract": "extract", "Extract to...": "extract",
+    "Copy to Other Pane": "copy_to", "Move to Other Pane": "copy_to", "New Folder": "folder",
 }
 
 
@@ -177,6 +179,7 @@ class ModernExplorer(QMainWindow):
         if show:
             filters |= QDir.Filter.Hidden | QDir.Filter.System
         self.file_model.setFilter(filters)
+        self.folder_pane.set_show_hidden(show)
         self.show_hidden = show
         self.settings.setValue("show_hidden", show)
         self.update_status()
@@ -194,6 +197,7 @@ class ModernExplorer(QMainWindow):
             widget.setIcon(ui_icon(name, self.icon_color))
         self.navigation_panel.set_icon_color(self.icon_color)
         self.preview_pane.set_icon_color(self.icon_color)
+        self.folder_pane.set_icon_color(self.icon_color)
         self.preview_pane.set_dark(palette["dark"])
         DrivesView.icon_color = self.icon_color
         if self.current_view == "drives":
@@ -302,6 +306,10 @@ class ModernExplorer(QMainWindow):
         self.app_bar_layout.addWidget(self.advanced_search_button)
         self.app_bar_layout.addSpacing(4)
 
+        self.dual_pane_button = self._make_tool_button("dual", "Two Panes (Ctrl+Shift+D)",
+                                                       lambda: self.set_dual_pane_visible(
+                                                           not self.folder_pane.isVisible()), checkable=True)
+        self.app_bar_layout.addWidget(self.dual_pane_button)
         self.toggle_preview_button = self._make_tool_button("preview", "Show Preview Panel",
                                                             self.toggle_preview_panel, checkable=True)
         self.app_bar_layout.addWidget(self.toggle_preview_button)
@@ -516,6 +524,18 @@ class ModernExplorer(QMainWindow):
 
         self.main_splitter.addWidget(self.content_frame)
 
+        # Second folder pane, hidden until toggled on
+        self._pane_active = False
+        self.folder_pane = FolderPane()
+        self.folder_pane.setVisible(False)
+        self.folder_pane.open_file.connect(self.open_path)
+        self.folder_pane.files_dropped.connect(self.transfer_files)
+        self.folder_pane.context_menu_requested.connect(self.show_pane_context_menu)
+        self.folder_pane.selection_changed.connect(self._preview_selection)
+        self.folder_pane.close_requested.connect(lambda: self.set_dual_pane_visible(False))
+        self.main_splitter.addWidget(self.folder_pane)
+        QApplication.instance().focusChanged.connect(self._on_focus_changed)
+
         # Preview pane, hidden until toggled on
         self.preview_pane = PreviewPane()
         self.preview_pane.setObjectName("preview_pane")
@@ -608,6 +628,7 @@ class ModernExplorer(QMainWindow):
             ("Ctrl+Tab", lambda: self._cycle_tab(1)),
             ("Ctrl+Shift+Tab", lambda: self._cycle_tab(-1)),
             ("Ctrl+D", self.toggle_favorite_current),
+            ("Ctrl+Shift+D", lambda: self.set_dual_pane_visible(not self.folder_pane.isVisible())),
         ]
         for key, slot in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
@@ -635,6 +656,8 @@ class ModernExplorer(QMainWindow):
 
         if self.settings.value("preview_visible", False, type=bool):
             self.set_preview_visible(True)
+        if self.settings.value("dual_pane_visible", False, type=bool):
+            self.set_dual_pane_visible(True, self.settings.value("dual_pane_path", None))
 
     def closeEvent(self, event):
         """Stop background work and save preferences on close."""
@@ -644,6 +667,8 @@ class ModernExplorer(QMainWindow):
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("view_mode", self.view_mode_combo.currentIndex())
         self.settings.setValue("preview_visible", self.preview_pane.isVisible())
+        self.settings.setValue("dual_pane_visible", self.folder_pane.isVisible())
+        self.settings.setValue("dual_pane_path", self.folder_pane.current_path)
         self.settings.setValue("tabs", [self._tab(i).history.current for i in range(self.tab_bar.count())])
         self.settings.setValue("current_tab", self.tab_bar.currentIndex())
         super().closeEvent(event)
@@ -678,7 +703,9 @@ class ModernExplorer(QMainWindow):
         return [p for p in paths if p and os.path.exists(p)]
 
     def selected_paths(self):
-        """Paths selected in whichever view is showing."""
+        """Paths selected in the active pane (see _pane_active)."""
+        if self.pane_is_active():
+            return self.folder_pane.selected_paths()
         if self.current_view == "search":
             return self.get_selected_search_paths()
         if self.current_view == "files":
@@ -827,6 +854,11 @@ class ModernExplorer(QMainWindow):
             pinned = self.navigation_panel.is_favorite(paths[0])
             pin_action = menu.addAction("Unpin from Favorites" if pinned else "Pin to Favorites")
         menu.addSeparator()
+        to_pane_action = move_to_pane_action = None
+        if self.folder_pane.isVisible():
+            to_pane_action = menu.addAction("Copy to Other Pane")
+            move_to_pane_action = menu.addAction("Move to Other Pane")
+            menu.addSeparator()
         cut_action = menu.addAction("Cut")
         copy_action = menu.addAction("Copy")
         copy_path_action = menu.addAction("Copy as Path")
@@ -858,6 +890,10 @@ class ModernExplorer(QMainWindow):
             self.copy_selected_files(paths)
         elif action == cut_action:
             self.cut_selected_files(paths)
+        elif to_pane_action is not None and action == to_pane_action:
+            self.send_to_other_pane(paths, from_pane=False, move=False)
+        elif move_to_pane_action is not None and action == move_to_pane_action:
+            self.send_to_other_pane(paths, from_pane=False, move=True)
         elif action == compress_action:
             self.compress_files(paths)
         elif extract_action is not None and action == extract_action:
@@ -1109,10 +1145,11 @@ class ModernExplorer(QMainWindow):
             self.status_label.setText("Nothing to paste")
             return
 
-        if not self._can_modify_current_folder("paste"):
+        destination = self._target_folder("paste")
+        if destination is None or not self._can_modify_folder(destination, "paste"):
             return
 
-        if self.transfer_files(sources, self.current_path, is_cut, check_folder=False) and is_cut:
+        if self.transfer_files(sources, destination, is_cut, check_folder=False) and is_cut:
             # A cut can only be pasted once
             QApplication.clipboard().clear()
 
@@ -1309,12 +1346,11 @@ class ModernExplorer(QMainWindow):
 
     def create_new_folder(self):
         """Create a new folder in the current directory."""
-        if self.current_view != "files":
-            QMessageBox.information(self, "Cannot Create Folder",
-                                    "Please navigate to a folder before creating a new folder.")
+        folder = self._target_folder("create a new folder")
+        if folder is None:
             return
 
-        default_name = os.path.basename(unique_target_path(self.current_path, "New folder"))
+        default_name = os.path.basename(unique_target_path(folder, "New folder"))
         folder_name, ok = QInputDialog.getText(self, "New Folder", "Enter folder name:", text=default_name)
         folder_name = folder_name.strip()
         if not ok or not folder_name:
@@ -1324,7 +1360,7 @@ class ModernExplorer(QMainWindow):
             return
 
         try:
-            os.mkdir(os.path.join(self.current_path, folder_name))
+            os.mkdir(os.path.join(folder, folder_name))
             self.status_label.setText(f"Created folder: {folder_name}")
         except FileExistsError:
             QMessageBox.warning(self, "Error", f"A folder named '{folder_name}' already exists.")
@@ -1337,12 +1373,11 @@ class ModernExplorer(QMainWindow):
         Args:
             extension: File extension (e.g., ".txt")
         """
-        if self.current_view != "files":
-            QMessageBox.information(self, "Cannot Create File",
-                                    "Please navigate to a folder before creating a new file.")
+        folder = self._target_folder("create a new file")
+        if folder is None:
             return
 
-        default_name = os.path.basename(unique_target_path(self.current_path, f"New File{extension}"))
+        default_name = os.path.basename(unique_target_path(folder, f"New File{extension}"))
         file_name, ok = QInputDialog.getText(self, f"New {extension[1:].upper()} File",
                                              "Enter file name:", text=default_name)
         file_name = file_name.strip()
@@ -1355,7 +1390,7 @@ class ModernExplorer(QMainWindow):
             QMessageBox.warning(self, "Invalid Name", f"'{file_name}' is not a valid file name.")
             return
 
-        new_file_path = os.path.join(self.current_path, file_name)
+        new_file_path = os.path.join(folder, file_name)
         templates = {
             ".html": "<!DOCTYPE html>\n<html>\n<head>\n\t<title>New Page</title>\n</head>\n<body>\n\t<h1>Hello World</h1>\n</body>\n</html>\n",
             ".py": "def main():\n    print('Hello World')\n\n\nif __name__ == '__main__':\n    main()\n",
@@ -1563,6 +1598,106 @@ class ModernExplorer(QMainWindow):
             self._show_errors(f"Some items could not be restored while undoing the {op['type']}:", errors)
         self.status_label.setText(f"Undid {op['type']} operation")
         self.update_status()
+
+    # -------------------------- Dual pane --------------------------
+
+    def set_dual_pane_visible(self, visible, path=None):
+        """Show or hide the second folder pane beside the main view."""
+        self.folder_pane.setVisible(visible)
+        self.dual_pane_button.setChecked(visible)
+        if visible:
+            if path and os.path.isdir(path):
+                self.folder_pane.navigate(path)
+            elif not self.folder_pane.current_path:
+                self.folder_pane.navigate(self.current_path)
+            sizes = self.main_splitter.sizes()
+            half = max(1, (sizes[0] + sizes[1]) // 2)
+            self.main_splitter.setSizes([half, half] + sizes[2:])
+            self.folder_pane.view.setFocus()
+        else:
+            self._set_pane_active(False)
+        self._update_active_pane_style()
+
+    def pane_is_active(self):
+        """Whether commands apply to the second pane (it was clicked last)."""
+        return self._pane_active and self.folder_pane.isVisible()
+
+    def _set_pane_active(self, active):
+        if self._pane_active != active:
+            self._pane_active = active
+            self._update_active_pane_style()
+            self._preview_selection()
+
+    def _update_active_pane_style(self):
+        """Mark the active pane with an accent line while both panes are shown."""
+        both = self.folder_pane.isVisible()
+        self.folder_pane.set_active(both and self._pane_active)
+        self.content_frame.setProperty("active", both and not self._pane_active)
+        self.content_frame.style().unpolish(self.content_frame)
+        self.content_frame.style().polish(self.content_frame)
+
+    def _on_focus_changed(self, old, new):
+        """Track which pane the user is working in (toolbar clicks don't change it)."""
+        if new is None or not self.isAncestorOf(new):
+            return
+        if self.folder_pane.isAncestorOf(new):
+            self._set_pane_active(True)
+        elif self.views_stack.isAncestorOf(new):
+            self._set_pane_active(False)
+
+    def _target_folder(self, action):
+        """The folder new items go into: the active pane's folder, or None with a message."""
+        if self.pane_is_active():
+            return self.folder_pane.current_path
+        if self.current_view != "files":
+            QMessageBox.information(self, f"Cannot {action.split()[0].capitalize()}",
+                                    f"Please navigate to a folder before you {action}.")
+            return None
+        return self.current_path
+
+    def other_pane_folder(self, from_pane):
+        """The folder shown in the pane opposite to the one items come from."""
+        if from_pane:
+            return self.current_path if self.current_view == "files" else None
+        return self.folder_pane.current_path if self.folder_pane.isVisible() else None
+
+    def send_to_other_pane(self, paths, from_pane, move):
+        """Copy or move items into the folder shown in the other pane."""
+        destination = self.other_pane_folder(from_pane)
+        if destination:
+            self.transfer_files(paths, destination, move)
+
+    def show_pane_context_menu(self, paths, global_pos):
+        """Right-click menu for the second pane."""
+        self._set_pane_active(True)
+        menu = QMenu(self)
+        if not paths:
+            paste_action = menu.addAction("Paste", self.paste_files)
+            paste_action.setEnabled(bool(self._read_clipboard()[0]))
+            menu.addAction("New Folder", self.create_new_folder)
+            menu.addAction("Refresh", self.folder_pane.refresh)
+            menu.addSeparator()
+            menu.addAction("Properties", lambda: self.show_properties(self.folder_pane.current_path))
+        else:
+            single = len(paths) == 1
+            menu.addAction("Open", lambda: self.folder_pane.navigate(paths[0]) if os.path.isdir(paths[0])
+                           else self.open_path(paths[0]))
+            if single and os.path.isdir(paths[0]):
+                menu.addAction("Open in New Tab", lambda: self.new_tab(paths[0]))
+            menu.addSeparator()
+            other = self.other_pane_folder(from_pane=True) is not None
+            menu.addAction("Copy to Other Pane", lambda: self.send_to_other_pane(paths, True, False)).setEnabled(other)
+            menu.addAction("Move to Other Pane", lambda: self.send_to_other_pane(paths, True, True)).setEnabled(other)
+            menu.addSeparator()
+            menu.addAction("Cut", lambda: self.cut_selected_files(paths))
+            menu.addAction("Copy", lambda: self.copy_selected_files(paths))
+            menu.addAction("Delete", lambda: self.delete_selected_files(paths))
+            menu.addAction("Rename" if single else f"Rename {len(paths)} Items...",
+                           lambda: self.rename_selected_file(paths[0]) if single else self.bulk_rename(paths))
+            menu.addSeparator()
+            menu.addAction("Properties", lambda: self.show_properties(paths[0])).setEnabled(single)
+        self._decorate_menu(menu)
+        menu.exec(global_pos)
 
     # -------------------------- Tabs --------------------------
 
@@ -1894,6 +2029,8 @@ class ModernExplorer(QMainWindow):
             self.drives_view.load_drives()
         else:
             self._show_directory(self.current_path)
+        if self.folder_pane.isVisible():
+            self.folder_pane.refresh()
 
     # -------------------------- Search --------------------------
 
