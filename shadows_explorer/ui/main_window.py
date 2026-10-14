@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout,
                             QSpinBox, QCheckBox, QApplication, QStackedWidget, QProgressDialog,
                             QTabBar, QScrollArea, QFileDialog)
 from PyQt6.QtCore import (Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings, QFileSystemWatcher,
-                          QProcess, QStandardPaths)
+                          QProcess, QStandardPaths, QItemSelection, QItemSelectionModel)
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 
 from shadows_explorer.theme.theme_manager import ThemeManager
@@ -77,6 +77,10 @@ GROUP_LABELS = {"none": "(None)", "type": "Type", "date": "Date modified", "size
 
 # Locations that are pages rather than folders: id -> title
 SPECIAL_LOCATIONS = {"pc": "This PC", "recent": "Recent"}
+# Icon sizes Ctrl + mouse wheel steps through, in the icon view and in the list/details views
+ICON_ZOOM_SIZES = [32, 48, 64, 72, 96, 128, 160, 192, 256]
+LIST_ZOOM_SIZES = [16, 18, 20, 24, 32, 48]
+DETAIL_COLUMNS = {1: "Size", 2: "Type", 3: "Date Modified"}
 
 # Context menu entries that get an icon (see _decorate_menu)
 MENU_ICONS = {
@@ -147,6 +151,7 @@ class ModernExplorer(QMainWindow):
         self._folder_status = ""
         self.show_hidden = False
         self.sort_key, self.sort_descending, self.group_mode = "name", False, "none"
+        self.icon_size, self.list_icon_size = 72, 18  # Zoom (Ctrl + mouse wheel)
         self.filter_pattern = ""
         self.recent = RecentItems(self.settings)
         self.program_history = ProgramHistory(self.settings)
@@ -523,6 +528,9 @@ class ModernExplorer(QMainWindow):
         self.group_button = self._menu_button("group", "Group", "Group items (shown as a list)")
         self.group_button.menu().aboutToShow.connect(self._fill_group_menu)
         view_layout.addWidget(self.group_button)
+        self.view_options_button = self._menu_button("sliders", "View", "Zoom, check boxes, extensions, selection")
+        self.view_options_button.menu().aboutToShow.connect(self._fill_view_options_menu)
+        view_layout.addWidget(self.view_options_button)
         view_layout.addSpacing(8)
 
         self.filter_box = QLineEdit()
@@ -587,6 +595,11 @@ class ModernExplorer(QMainWindow):
         self.detail_view.setUniformRowHeights(True)
         self.detail_view.setIconSize(QSize(18, 18))
         self.detail_view.setColumnWidth(0, 320)
+        # Right-click the column headers to choose columns, as in Explorer
+        self.detail_view.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.detail_view.header().customContextMenuRequested.connect(self._show_column_menu)
+        for view in (self.file_view, self.detail_view):
+            view.zoom_requested.connect(self.zoom)
 
         # Grouped view, used instead of the others while grouping is on
         self.grouped_view = GroupedFolderView()
@@ -749,6 +762,10 @@ class ModernExplorer(QMainWindow):
             ("Ctrl+Shift+P", self.show_command_palette),
             ("Ctrl+`", lambda: self.open_terminal_here()),
             ("Ctrl+0", self.clear_tags),
+            ("Ctrl+=", lambda: self.zoom(1)),
+            ("Ctrl++", lambda: self.zoom(1)),
+            ("Ctrl+-", lambda: self.zoom(-1)),
+            ("Ctrl+Shift+C", self.copy_paths),
         ]
         # Ctrl+1 ... Ctrl+9 toggle the first nine tags on the selection
         shortcuts += [(f"Ctrl+{n}", lambda n=n: self.toggle_tag_number(n)) for n in range(1, 10)]
@@ -849,6 +866,16 @@ class ModernExplorer(QMainWindow):
                      for number, name in enumerate(self.tag_store.tags, 1)]
         commands += [C(f"Show Tag: {name}", lambda n=name: self.show_tag_view(n))
                      for name, count in tag_counts.items() if count]
+        commands += [C("Zoom In", lambda: self.zoom(1), "Ctrl+=", in_files),
+                     C("Zoom Out", lambda: self.zoom(-1), "Ctrl+-", in_files),
+                     C("Reset Zoom", self.reset_zoom, "", in_files),
+                     C("Show/Hide Item Check Boxes", lambda: self.set_check_boxes(not self.file_view.check_boxes)),
+                     C("Show/Hide File Name Extensions",
+                       lambda: self.set_show_extensions(not self.file_model.show_extensions)),
+                     C("Select All", self.select_all, "Ctrl+A", in_files),
+                     C("Select None", self.select_none, "", bool(selection)),
+                     C("Invert Selection", self.invert_selection, "", in_files),
+                     C("Copy Path", self.copy_paths, "Ctrl+Shift+C", bool(selection))]
         commands += [C("New Tag...", lambda: self.new_tag(selection)),
                      C("Remove All Tags", lambda: self.clear_tags(selection), "Ctrl+0", bool(selection))]
         return commands
@@ -864,6 +891,17 @@ class ModernExplorer(QMainWindow):
             self.restoreGeometry(geometry)
         else:
             self.resize(1200, 750)
+
+        icon_size = int(self.settings.value("icon_size", 72))
+        list_icon_size = int(self.settings.value("list_icon_size", 18))
+        self.icon_size = icon_size if icon_size in ICON_ZOOM_SIZES else 72
+        self.list_icon_size = list_icon_size if list_icon_size in LIST_ZOOM_SIZES else 18
+        self._apply_zoom()
+        self.set_check_boxes(self.settings.value("check_boxes", False, type=bool))
+        self.set_show_extensions(self.settings.value("show_extensions", True, type=bool))
+        hidden_columns = self.settings.value("hidden_columns", [], type=list)
+        for column in DETAIL_COLUMNS:
+            self.detail_view.setColumnHidden(column, str(column) in [str(c) for c in hidden_columns])
 
         view_mode = int(self.settings.value("view_mode", VIEW_ICONS))
         if view_mode in (VIEW_ICONS, VIEW_LIST, VIEW_DETAILS):
@@ -2311,6 +2349,118 @@ class ModernExplorer(QMainWindow):
             return tag_dot_icon(self.tag_store.tags[location[4:]])
         return file_type_icon("folder")
 
+    # -------------------------- View options --------------------------
+
+    def _fill_view_options_menu(self):
+        menu = self.view_options_button.menu()
+        menu.clear()
+        in_files = self.current_view == "files"
+        menu.addAction("Zoom In\tCtrl+=", lambda: self.zoom(1)).setEnabled(in_files)
+        menu.addAction("Zoom Out\tCtrl+-", lambda: self.zoom(-1)).setEnabled(in_files)
+        menu.addAction("Reset Zoom", self.reset_zoom).setEnabled(in_files)
+        menu.addSeparator()
+        for label, checked, slot in (
+                ("Item check boxes", self.file_view.check_boxes, self.set_check_boxes),
+                ("File name extensions", self.file_model.show_extensions, self.set_show_extensions),
+                ("Folder sizes", self.file_model.folder_sizes_enabled, self.set_folder_sizes)):
+            action = menu.addAction(label, lambda s=slot, c=checked: s(not c))
+            action.setCheckable(True)
+            action.setChecked(checked)
+        menu.addSeparator()
+        menu.addAction("Select All\tCtrl+A", self.select_all).setEnabled(in_files)
+        menu.addAction("Select None", self.select_none).setEnabled(in_files)
+        menu.addAction("Invert Selection", self.invert_selection).setEnabled(in_files)
+
+    def zoom(self, step):
+        """Make icons bigger (step > 0) or smaller in the current view (Ctrl + mouse wheel)."""
+        if self.current_view != "files":
+            return
+        if self.view_mode_combo.currentIndex() == VIEW_ICONS:
+            sizes, current = ICON_ZOOM_SIZES, self.icon_size
+        else:
+            sizes, current = LIST_ZOOM_SIZES, self.list_icon_size
+        position = min(range(len(sizes)), key=lambda i: abs(sizes[i] - current))
+        size = sizes[max(0, min(len(sizes) - 1, position + step))]
+        if self.view_mode_combo.currentIndex() == VIEW_ICONS:
+            self.icon_size = size
+            self.settings.setValue("icon_size", size)
+        else:
+            self.list_icon_size = size
+            self.settings.setValue("list_icon_size", size)
+        self._apply_zoom()
+        self.status_label.setText(f"Icon size: {size} px")
+
+    def reset_zoom(self):
+        self.icon_size, self.list_icon_size = 72, 18
+        self.settings.setValue("icon_size", 72)
+        self.settings.setValue("list_icon_size", 18)
+        self._apply_zoom()
+
+    def _apply_zoom(self):
+        mode = self.view_mode_combo.currentIndex()
+        if mode in (VIEW_ICONS, VIEW_LIST):
+            self._apply_list_mode(mode)
+        self.detail_view.setIconSize(QSize(self.list_icon_size, self.list_icon_size))
+        # Sharper thumbnails for big icons
+        self.file_model.set_thumbnail_size(256 if self.icon_size > 128 else 128)
+
+    def set_check_boxes(self, enabled):
+        """Explorer's "Item check boxes": click a box to add or remove an item from the selection."""
+        for view in (self.file_view, self.detail_view, self.folder_pane.view):
+            view.set_check_boxes(enabled)
+        self.settings.setValue("check_boxes", enabled)
+
+    def set_show_extensions(self, show):
+        """Show or hide file name extensions in the folder views."""
+        self.file_model.set_show_extensions(show)
+        self.folder_pane.model.set_show_extensions(show)
+        self.settings.setValue("show_extensions", show)
+
+    def select_all(self):
+        view = self.folder_pane.view if self.pane_is_active() else self._active_file_view()
+        view.selectAll()
+
+    def select_none(self):
+        view = self.folder_pane.view if self.pane_is_active() else self._active_file_view()
+        view.clearSelection()
+
+    def invert_selection(self):
+        """Select what isn't selected and unselect what is (like Explorer's Invert selection)."""
+        view = self.folder_pane.view if self.pane_is_active() else self._active_file_view()
+        model, root = view.model(), view.rootIndex()
+        if model.rowCount(root) == 0:
+            return
+        selection = QItemSelection(model.index(0, 0, root),
+                                   model.index(model.rowCount(root) - 1, model.columnCount(root) - 1, root))
+        view.selectionModel().select(selection, QItemSelectionModel.SelectionFlag.Toggle)
+
+    def copy_paths(self, paths=None):
+        """Ctrl+Shift+C: copy the selected items' full paths, one per line."""
+        paths = paths or self.selected_paths()
+        if paths:
+            QApplication.clipboard().setText("\n".join(paths))
+            self.status_label.setText(f"Copied {len(paths)} path{'s' if len(paths) != 1 else ''}")
+
+    def _show_column_menu(self, position):
+        """Right-click on the details header: choose columns and size them."""
+        header = self.detail_view.header()
+        clicked = header.logicalIndexAt(position)
+        menu = QMenu(self)
+        for column, label in DETAIL_COLUMNS.items():
+            action = menu.addAction(label, lambda c=column: self._toggle_column(c))
+            action.setCheckable(True)
+            action.setChecked(not self.detail_view.isColumnHidden(column))
+        menu.addSeparator()
+        menu.addAction("Size Column to Fit", lambda: self.detail_view.resizeColumnToContents(clicked)).setEnabled(
+            clicked >= 0)
+        menu.addAction("Size All Columns to Fit", lambda: [self.detail_view.resizeColumnToContents(c)
+                                                           for c in range(header.count())])
+        menu.exec(header.mapToGlobal(position))
+
+    def _toggle_column(self, column):
+        self.detail_view.setColumnHidden(column, not self.detail_view.isColumnHidden(column))
+        self.settings.setValue("hidden_columns", [c for c in DETAIL_COLUMNS if self.detail_view.isColumnHidden(c)])
+
     # -------------------------- Tags --------------------------
 
     def _move_tags(self, pairs):
@@ -2537,14 +2687,15 @@ class ModernExplorer(QMainWindow):
         """Configure the QListView for icon or list display."""
         if index == VIEW_ICONS:
             self.file_view.setViewMode(QListView.ViewMode.IconMode)
-            self.file_view.setGridSize(QSize(124, 118))
-            self.file_view.setIconSize(QSize(72, 72))
+            size = self.icon_size
+            self.file_view.setGridSize(QSize(max(124, size + 44), size + 46))
+            self.file_view.setIconSize(QSize(size, size))
             self.file_view.setSpacing(6)
             self.file_view.setWordWrap(True)
         else:
             self.file_view.setViewMode(QListView.ViewMode.ListMode)
             self.file_view.setGridSize(QSize())
-            self.file_view.setIconSize(QSize(18, 18))
+            self.file_view.setIconSize(QSize(self.list_icon_size, self.list_icon_size))
             self.file_view.setSpacing(1)
             self.file_view.setWordWrap(False)
         # setViewMode resets this; keep items from being dragged around inside the view

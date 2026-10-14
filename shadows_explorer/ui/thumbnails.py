@@ -95,6 +95,7 @@ class ThumbnailFileSystemModel(QFileSystemModel):
         self._loader.loaded.connect(self._on_loaded)
         self.setReadOnly(False)  # Allow renaming in place
         self.tag_store = None  # core.tags.TagStore, for tag dots (set by the window)
+        self.show_extensions = True
 
         # Folder sizes for the Size column (optional; a full walk per folder)
         self.folder_sizes_enabled = False
@@ -103,6 +104,21 @@ class ThumbnailFileSystemModel(QFileSystemModel):
         self._size_cancel = threading.Event()
         self._size_pool = ThreadPoolExecutor(max_workers=1)
         self._loader.size_loaded.connect(self._on_size_loaded)
+
+    def set_thumbnail_size(self, size):
+        """Render thumbnails at size pixels (e.g. bigger when zoomed in)."""
+        if size != self.thumbnail_size:
+            self.thumbnail_size = size
+            self._cache.clear()
+            self._failed.clear()
+            if self.thumbnails_enabled:
+                self.layoutChanged.emit()
+
+    def set_show_extensions(self, show):
+        """Show or hide file name extensions ("report.pdf" or "report"), like Explorer's option."""
+        if show != self.show_extensions:
+            self.show_extensions = show
+            self.layoutChanged.emit()
 
     def set_thumbnails_enabled(self, enabled):
         """Turn thumbnails on or off and repaint."""
@@ -124,6 +140,11 @@ class ThumbnailFileSystemModel(QFileSystemModel):
             thumbnail = self._thumbnail(index)
             if thumbnail is not None:
                 return thumbnail
+        if (role == Qt.ItemDataRole.DisplayRole and not self.show_extensions and index.isValid()
+                and index.column() == 0 and not self.isDir(index)):
+            # Renaming still edits the full name (EditRole is untouched)
+            stem, _ = os.path.splitext(self.fileName(index))
+            return stem or self.fileName(index)
         if role == Qt.ItemDataRole.DisplayRole and index.isValid() and index.column() == 1:
             if not self.isDir(index):
                 # Same "1.2 MB" style as the rest of the app (Qt would say "1.14 MiB")

@@ -50,6 +50,13 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
   syntax-highlighted code, plain text, and folder summaries
 - Properties dialog with folder size calculation; optional folder sizes in the details view
   (Sort → Show folder sizes), measured in the background
+- Properties → Details for photos (camera, lens, date taken, exposure, aperture, ISO, GPS location with a
+  map link) and music/video (length, bit rate, sample rate, frame size, title/artist/album), read without
+  any extra packages
+- View menu: zoom with Ctrl + mouse wheel (or Ctrl+= / Ctrl+-, remembered per view), item check boxes,
+  file name extensions on/off, select none and invert selection; right-click the details header to
+  choose and auto-size columns
+- Drag folders onto FAVORITES in the sidebar to pin them
 - Find Duplicates (right-click a folder): files with identical content, compared by size then hash;
   tick copies (or keep oldest/newest automatically) and send them to the Recycle Bin, never all copies
 - Analyze Disk Usage (right-click a folder): a size-sorted tree with share bars and the largest files
@@ -100,6 +107,8 @@ shadows-explorer                  # same as: python -m shadows_explorer
 | Ctrl+Shift+D | Show or hide the second pane |
 | Ctrl+Shift+P | Command bar: search and run any command |
 | Ctrl+` | Open a terminal in the current folder |
+| Ctrl + mouse wheel, Ctrl+= / Ctrl+- | Zoom icons in or out |
+| Ctrl+Shift+C | Copy the selected items' paths |
 | Ctrl+1 … Ctrl+9 / Ctrl+0 | Toggle the first nine tags on the selection / remove all its tags |
 
 ## Project layout
@@ -118,6 +127,7 @@ shadows_explorer/
 │   ├── file_types.py       File extension → category (image, code, pdf, ...)
 │   ├── fuzzy.py            Fuzzy matching for the command bar
 │   ├── grouping.py         Sorting and grouping rules
+│   ├── media_info.py       Photo EXIF and audio/video details
 │   ├── open_with.py        Open-with commands and remembered programs
 │   ├── recent.py           Recent files/folders and the live filter pattern
 │   ├── safety.py           Protected folders, open/delete checks, Recycle Bin

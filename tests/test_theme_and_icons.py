@@ -1,15 +1,19 @@
+import os
+
 import pytest
 
 from shadows_explorer.core.file_types import EXTENSION_KINDS, file_kind
 from shadows_explorer.theme.icons import FILE_TYPE_COLORS, UI_ICONS, file_type_icon, ui_icon
-from shadows_explorer.theme.theme_manager import PALETTES, STYLESHEET
+from shadows_explorer.theme.theme_manager import PALETTES, build_stylesheet, check_mark_file
 
 
 @pytest.mark.parametrize("name", sorted(PALETTES))
 def test_every_palette_fills_the_stylesheet(name):
     # A missing color token would raise KeyError here
-    stylesheet = STYLESHEET.format(**PALETTES[name])
+    stylesheet = build_stylesheet(PALETTES[name])
     assert "{" in stylesheet and "{{" not in stylesheet
+    # Checked boxes get a real check mark image
+    assert os.path.exists(check_mark_file(PALETTES[name]["on_accent"]))
 
 
 def test_file_kind():

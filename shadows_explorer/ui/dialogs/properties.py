@@ -7,10 +7,13 @@ file or folder. Folder sizes are calculated in a background thread.
 import threading
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel, QPushButton,
-                            QHBoxLayout, QStyle, QFileIconProvider)
+                            QHBoxLayout, QStyle, QFileIconProvider, QTabWidget, QWidget)
 from PyQt6.QtCore import Qt, QFileInfo, pyqtSignal
+from PyQt6.QtGui import QImageReader
 
 from shadows_explorer.core.disk_usage import folder_size
+from shadows_explorer.core.file_types import file_kind
+from shadows_explorer.core.media_info import media_details
 from shadows_explorer.core.utils import format_size
 
 
@@ -96,7 +99,33 @@ class PropertiesDialog(QDialog):
             attributes.append("Executable")
         form.addRow("Attributes:", QLabel(", ".join(attributes) or "None"))
 
-        layout.addLayout(form)
+        details = [] if info.isDir() else self._media_rows(path)
+        if details:
+            # Like Explorer: General and Details tabs
+            tabs = QTabWidget()
+            general = QWidget()
+            QVBoxLayout(general).addLayout(form)
+            general.layout().addStretch()
+            tabs.addTab(general, "General")
+            details_widget = QWidget()
+            details_form = QFormLayout(details_widget)
+            details_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+            for label, value in details:
+                value_label = QLabel(value)
+                value_label.setWordWrap(True)
+                value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                if label == "Location":
+                    # Where the photo was taken, on a map
+                    lat, lon = (part.strip() for part in value.split(","))
+                    value_label.setText(f'<a href="https://www.openstreetmap.org/?mlat={lat}&mlon={lon}'
+                                        f'#map=15/{lat}/{lon}">{value}</a>')
+                    value_label.setOpenExternalLinks(True)
+                    value_label.setToolTip("Show on OpenStreetMap")
+                details_form.addRow(f"{label}:", value_label)
+            tabs.addTab(details_widget, "Details")
+            layout.addWidget(tabs)
+        else:
+            layout.addLayout(form)
 
         buttons = QHBoxLayout()
         buttons.addStretch()
@@ -105,6 +134,16 @@ class PropertiesDialog(QDialog):
         close_button.clicked.connect(self.accept)
         buttons.addWidget(close_button)
         layout.addLayout(buttons)
+
+    @staticmethod
+    def _media_rows(path):
+        """Media details for the Details tab, with picture dimensions from Qt when the file has none."""
+        rows = media_details(path)
+        if file_kind(path) == "image" and not any(label == "Dimensions" for label, _ in rows):
+            size = QImageReader(path).size()
+            if size.isValid():
+                rows.insert(0, ("Dimensions", f"{size.width()} x {size.height()}"))
+        return rows
 
     def _calculate_folder_size(self):
         """Worker thread: measure the folder and report back via a signal."""

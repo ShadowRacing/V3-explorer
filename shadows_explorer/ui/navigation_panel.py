@@ -105,6 +105,38 @@ class NavItem(QWidget):
         self.files_dropped.emit(paths, self.path, is_move)
 
 
+class PinDropLabel(QLabel):
+    """A label that pins folders dropped on it (the FAVORITES header and its hint).
+
+    Signals:
+        folders_dropped: Folders were dropped (paths)
+    """
+
+    folders_dropped = pyqtSignal(list)
+
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setAcceptDrops(True)
+
+    @staticmethod
+    def _folders(event):
+        return [p for p in local_paths_from_mime(event.mimeData()) if os.path.isdir(p)]
+
+    def dragEnterEvent(self, event):
+        if self._folders(event):
+            event.setDropAction(Qt.DropAction.LinkAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        folders = self._folders(event)
+        if folders:
+            event.setDropAction(Qt.DropAction.LinkAction)
+            event.accept()
+            self.folders_dropped.emit(folders)
+
+
 class TagNavItem(NavItem):
     """Sidebar entry for a tag: a colored dot, and dropping files on it tags them.
 
@@ -194,9 +226,17 @@ class NavigationPanel(QWidget):
 
         # Favorites section, hidden while empty
         self.icon_color = "#c9ced6"
-        self.favorites_header = self._make_header("FAVORITES")
-        self.favorites_header.setToolTip("Right-click a folder and choose \"Pin to Favorites\"")
+        # Dropping folders on the header (or the hint below it) pins them, like Quick Access
+        self.favorites_header = PinDropLabel("FAVORITES")
+        self.favorites_header.setObjectName("nav_header")
+        self.favorites_header.setToolTip("Drag folders here, or right-click a folder and choose \"Pin to Favorites\"")
+        self.favorites_header.folders_dropped.connect(self._pin_dropped)
         self.layout.addWidget(self.favorites_header)
+        self.favorites_hint = PinDropLabel("Drag folders here to pin them")
+        self.favorites_hint.setObjectName("status_label")
+        self.favorites_hint.setStyleSheet("background: transparent; padding: 2px 12px 4px 12px; font-size: 11px;")
+        self.favorites_hint.folders_dropped.connect(self._pin_dropped)
+        self.layout.addWidget(self.favorites_hint)
         self.favorites_container = QWidget()
         self.favorites_container.setObjectName("nav_container")
         self.favorites_layout = QVBoxLayout(self.favorites_container)
@@ -429,13 +469,17 @@ class NavigationPanel(QWidget):
             self.favorites_layout.addWidget(item)
             self.favorite_items[item_id] = item
 
+        # The header stays as a drop target; the hint shows while nothing is pinned
         has_favorites = bool(self.favorites)
-        self.favorites_header.setVisible(has_favorites)
+        self.favorites_hint.setVisible(not has_favorites)
         self.favorites_container.setVisible(has_favorites)
-        self.favorites_spacing.setVisible(has_favorites)
 
         if self.active_item and self.active_item.startswith("fav_"):
             self._highlight(self.active_item if self.active_item in self.favorite_items else None)
+
+    def _pin_dropped(self, folders):
+        for folder in folders:
+            self.add_favorite(folder)
 
     def is_favorite(self, path):
         return any(paths_equal(path, favorite) for favorite in self.favorites)

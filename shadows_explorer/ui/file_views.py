@@ -7,8 +7,9 @@ moves.
 """
 import os
 
-from PyQt6.QtWidgets import QAbstractItemView, QLineEdit, QListView, QTreeView
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtWidgets import (QAbstractItemView, QLineEdit, QListView, QStyle, QStyleOptionViewItem,
+                             QTreeView)
+from PyQt6.QtCore import QItemSelectionModel, QRect, Qt, QTimer, pyqtSignal
 
 from shadows_explorer.ui.tags import TagDotsDelegate
 
@@ -46,8 +47,58 @@ def should_move(sources, destination, modifiers):
     return all(same_device(source, destination) for source in sources)
 
 
+CHECK_SIZE = 16  # Item check boxes, like Explorer's "Item check boxes" option
+
+
 class RenameDelegate(TagDotsDelegate):
-    """In-place rename editor that selects the name but not the extension; also draws tag dots."""
+    """In-place rename editor that selects the name but not the extension.
+
+    Also draws tag dots, and the item's check box when the view shows them.
+    """
+
+    def _shift(self, view):
+        """How far the item moves right to make room for its check box (0 in icon mode)."""
+        if not getattr(view, "check_boxes", False) or view.is_icon_mode():
+            return 0
+        return CHECK_SIZE + 6
+
+    def paint(self, painter, option, index):
+        view = self.parent()
+        if not getattr(view, "check_boxes", False):
+            super().paint(painter, option, index)
+            return
+        shift = self._shift(view)
+        if shift:
+            # Background (selection, hover) across the whole cell, then the item beside the box
+            background = QStyleOptionViewItem(option)
+            self.initStyleOption(background, index)
+            style = view.style()
+            style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, background, painter, view)
+            shifted = QStyleOptionViewItem(option)
+            shifted.rect = option.rect.adjusted(shift, 0, 0, 0)
+            shifted.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver)
+            if option.state & QStyle.StateFlag.State_Selected:
+                # Keep the selected text color without drawing the highlight twice
+                shifted.palette.setColor(shifted.palette.ColorRole.Text,
+                                         option.palette.color(option.palette.ColorRole.HighlightedText))
+            super().paint(painter, shifted, index)
+        else:
+            super().paint(painter, option, index)
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        # Like Explorer: boxes appear on hover, and on every item once something is selected
+        if selected or hovered or view.selectionModel().hasSelection():
+            box = QStyleOptionViewItem(option)
+            box.rect = view.check_rect(option.rect)
+            box.state = QStyle.StateFlag.State_Enabled | (
+                QStyle.StateFlag.State_On if selected else QStyle.StateFlag.State_Off)
+            view.style().drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck, box, painter, view)
+
+    def updateEditorGeometry(self, editor, option, index):
+        super().updateEditorGeometry(editor, option, index)
+        shift = self._shift(self.parent())
+        if shift:
+            editor.setGeometry(editor.geometry().adjusted(shift, 0, 0, 0))
     
     def setEditorData(self, editor, index):
         super().setEditorData(editor, index)
@@ -69,6 +120,8 @@ class FileDropMixin:
     The subclass declares the signals (PyQt signals must live on the Qt class).
     """
 
+    check_boxes = False
+
     def _init_drag_drop(self):
         self.setItemDelegateForColumn(0, RenameDelegate(self))
         self.setDragEnabled(True)
@@ -76,6 +129,62 @@ class FileDropMixin:
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+    def is_icon_mode(self):
+        return isinstance(self, QListView) and self.viewMode() == QListView.ViewMode.IconMode
+
+    def set_check_boxes(self, enabled):
+        """Show a check box on items; clicking it adds or removes the item from the selection."""
+        self.check_boxes = enabled
+        self.setMouseTracking(True)  # Hover state, so boxes appear under the mouse
+        self.viewport().update()
+
+    def check_rect(self, item_rect):
+        """Where an item's check box is drawn, for the item's rectangle."""
+        if self.is_icon_mode():
+            return QRect(item_rect.left() + 4, item_rect.top() + 4, CHECK_SIZE, CHECK_SIZE)
+        return QRect(item_rect.left() + 4, item_rect.center().y() - CHECK_SIZE // 2 + 1, CHECK_SIZE, CHECK_SIZE)
+
+    def _check_box_at(self, pos):
+        """The column-0 index whose check box is at pos, or None."""
+        if not self.check_boxes:
+            return None
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return None
+        index = index.siblingAtColumn(0)
+        if self.check_rect(self.visualRect(index)).adjusted(-3, -3, 3, 3).contains(pos):
+            return index
+        return None
+
+    def mousePressEvent(self, event):
+        index = self._check_box_at(event.position().toPoint()) if event.button() == Qt.MouseButton.LeftButton \
+            else None
+        if index is not None:
+            flags = QItemSelectionModel.SelectionFlag.Toggle | QItemSelectionModel.SelectionFlag.Rows
+            self.selectionModel().select(index, flags)
+            self.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.NoUpdate)
+            self.viewport().update()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        # A quick second click on a box toggles again instead of opening the item
+        if self._check_box_at(event.position().toPoint()) is not None:
+            self.mousePressEvent(event)
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def wheelEvent(self, event):
+        # Ctrl + mouse wheel zooms, as in Explorer
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            steps = event.angleDelta().y()
+            if steps:
+                self.zoom_requested.emit(1 if steps > 0 else -1)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def _drop_target(self, pos):
         """Folder a drop at pos would land in."""
@@ -127,10 +236,12 @@ class FileListView(FileDropMixin, QListView):
     Signals:
         files_dropped: Files were dropped (paths, destination folder, is_move)
         open_in_new_tab: A folder was middle-clicked (path)
+        zoom_requested: Ctrl + mouse wheel (+1 bigger, -1 smaller)
     """
 
     files_dropped = pyqtSignal(list, str, bool)
     open_in_new_tab = pyqtSignal(str)
+    zoom_requested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -145,10 +256,12 @@ class FileTreeView(FileDropMixin, QTreeView):
     Signals:
         files_dropped: Files were dropped (paths, destination folder, is_move)
         open_in_new_tab: A folder was middle-clicked (path)
+        zoom_requested: Ctrl + mouse wheel (+1 bigger, -1 smaller)
     """
 
     files_dropped = pyqtSignal(list, str, bool)
     open_in_new_tab = pyqtSignal(str)
+    zoom_requested = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)

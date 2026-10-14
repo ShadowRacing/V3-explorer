@@ -5,8 +5,34 @@ This module provides the ThemeManager class which handles application themes.
 Every theme is a palette of colors filled into one shared stylesheet, so all
 themes style the same widgets consistently.
 """
+import os
+import tempfile
+
 from PyQt6.QtCore import pyqtSignal, QObject, QSettings, Qt
 from PyQt6.QtGui import QGuiApplication
+
+def check_mark_file(color):
+    """Path of an SVG check mark in color, for checked check boxes (a stylesheet needs a file).
+
+    Written once per color to the temp folder; forward slashes so the stylesheet accepts it on Windows.
+    """
+    path = os.path.join(tempfile.gettempdir(), f"shadows-explorer-check-{color.lstrip('#')}.svg")
+    if not os.path.exists(path):
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" '
+               f'fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" '
+               f'stroke-linejoin="round"/></svg>')
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(svg)
+        except OSError:
+            return ""
+    return path.replace("\\", "/")
+
+
+def build_stylesheet(palette):
+    """The app stylesheet filled in with a palette's colors."""
+    return STYLESHEET.format(check_image=check_mark_file(palette["on_accent"]), **palette)
+
 
 PALETTES = {
     "dark": {
@@ -162,7 +188,7 @@ QCheckBox::indicator, QTreeView::indicator, QListView::indicator {{ border-radiu
 QRadioButton::indicator {{ border-radius: 8px; }}
 QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border: 1px solid {accent}; }}
 QCheckBox::indicator:checked, QTreeView::indicator:checked, QListView::indicator:checked {{
-    background-color: {accent}; border: 1px solid {accent};
+    background-color: {accent}; border: 1px solid {accent}; image: url("{check_image}");
 }}
 QRadioButton::indicator:checked {{
     background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
@@ -302,7 +328,7 @@ class ThemeManager(QObject):
         Returns:
             str: Qt stylesheet for the theme
         """
-        return STYLESHEET.format(**self.palette(theme_name))
+        return build_stylesheet(self.palette(theme_name))
 
     def is_dark(self, theme_name=None):
         """Whether a theme has a dark background.
