@@ -70,6 +70,8 @@ UI_ICONS = {
     "group": '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M6 11h12M6 15h12M6 19h8"/>',
     "recent": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     "usage": '<path d="M12 3a9 9 0 1 0 9 9h-9z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/>',
+    "terminal": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
+    "command": '<path d="M4 6h16M4 12h9M4 18h6"/><circle cx="16.5" cy="16" r="3"/><path d="M18.7 18.2L21 20.5"/>',
     "hidden": '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
 }
 
