@@ -33,6 +33,7 @@ from shadows_explorer.core.background import BackgroundJob
 from shadows_explorer.core.bulk_rename import execute_renames
 from shadows_explorer.ui.dialogs.bulk_rename import BulkRenameDialog
 from shadows_explorer.ui.dialogs.disk_usage import DiskUsageDialog
+from shadows_explorer.ui.dialogs.duplicates import DuplicatesDialog
 from shadows_explorer.ui.dual_pane import FolderPane
 from shadows_explorer.ui.thumbnails import ThumbnailFileSystemModel
 from shadows_explorer.core.grouping import GROUP_MODES, SORT_KEYS, group_entries, list_entries, sort_entries
@@ -85,7 +86,7 @@ MENU_ICONS = {
     "Remove from Recent": "close", "Clear Recent Items": "delete",
     "Open with": "window", "Send to": "copy_to", "Compressed (zip) folder": "archive",
     "Choose program...": "folder", "Choose another app...": "window", "Choose folder...": "folder",
-    "Analyze Disk Usage": "usage",
+    "Analyze Disk Usage": "usage", "Find Duplicates...": "copy",
 }
 
 
@@ -946,6 +947,7 @@ class ModernExplorer(QMainWindow):
             menu.addAction("Unpin This Folder" if pinned else "Pin This Folder to Favorites",
                            self.toggle_favorite_current)
             menu.addAction("Analyze Disk Usage", lambda: self.show_disk_usage(self.current_path))
+            menu.addAction("Find Duplicates...", lambda: self.find_duplicates(self.current_path))
             menu.addAction("Properties", lambda: self.show_properties(self.current_path))
             self._decorate_menu(menu)
             menu.exec(view.viewport().mapToGlobal(position))
@@ -961,6 +963,7 @@ class ModernExplorer(QMainWindow):
             pinned = self.navigation_panel.is_favorite(paths[0])
             pin_action = menu.addAction("Unpin from Favorites" if pinned else "Pin to Favorites")
             menu.addAction("Analyze Disk Usage", lambda: self.show_disk_usage(paths[0]))
+            menu.addAction("Find Duplicates...", lambda: self.find_duplicates(paths[0]))
         menu.addSeparator()
         to_pane_action = move_to_pane_action = None
         if self.folder_pane.isVisible():
@@ -1882,6 +1885,35 @@ class ModernExplorer(QMainWindow):
         dialog = DiskUsageDialog(path, self._show_in_main_window, self)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
+
+    def find_duplicates(self, folder):
+        """Open the duplicate finder for a folder (a separate window)."""
+        dialog = DuplicatesDialog(folder, self._recycle_duplicates, self._show_in_main_window, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+
+    def _recycle_duplicates(self, paths):
+        """Recycle duplicates for the finder; returns the paths still not removed.
+
+        Like Delete, offers permanent deletion when the Recycle Bin can't take them.
+        """
+        failed = self.safety_manager.move_to_recycle_bin(paths)
+        if failed:
+            answer = QMessageBox.question(
+                self, "Permanent Deletion",
+                f"{len(failed)} file(s) cannot be moved to the Recycle Bin. Delete them permanently instead?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer == QMessageBox.StandardButton.Yes:
+                still_failed = []
+                for path in failed:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        still_failed.append(path)
+                failed = still_failed
+        self._remove_missing_search_results()
+        self.update_status()
+        return failed
 
     def _show_in_main_window(self, path):
         """Go to a folder, or to a file's folder with the file selected."""
