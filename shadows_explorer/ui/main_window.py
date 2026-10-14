@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout,
                             QInputDialog, QDialog, QTextEdit, QFrame, QDateEdit, QRadioButton, QGroupBox,
                             QSpinBox, QCheckBox, QApplication, QStackedWidget, QProgressDialog,
                             QTabBar, QScrollArea, QFileDialog)
-from PyQt6.QtCore import Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings, QFileSystemWatcher
+from PyQt6.QtCore import (Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings, QFileSystemWatcher,
+                          QProcess, QStandardPaths)
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 
 from shadows_explorer.theme.theme_manager import ThemeManager
@@ -37,6 +38,8 @@ from shadows_explorer.core.grouping import GROUP_MODES, SORT_KEYS, group_entries
 from shadows_explorer.ui.grouped_view import GroupedFolderView
 from shadows_explorer.core.grouping import Entry
 from shadows_explorer.core.recent import RecentItems, filter_pattern
+from shadows_explorer.core.open_with import (ProgramHistory, launch_command, program_display_name,
+                                             system_chooser_command)
 from shadows_explorer.ui.breadcrumb_bar import FixedBreadcrumbBar
 from shadows_explorer.ui.drives_view import DrivesView
 from shadows_explorer.ui.preview_pane import PreviewPane
@@ -79,6 +82,8 @@ MENU_ICONS = {
     "Compress to ZIP": "archive", "Extract": "extract", "Extract to...": "extract",
     "Copy to Other Pane": "copy_to", "Move to Other Pane": "copy_to", "New Folder": "folder",
     "Remove from Recent": "close", "Clear Recent Items": "delete",
+    "Open with": "window", "Send to": "copy_to", "Compressed (zip) folder": "archive",
+    "Choose program...": "folder", "Choose another app...": "window", "Choose folder...": "folder",
 }
 
 
@@ -135,6 +140,7 @@ class ModernExplorer(QMainWindow):
         self.sort_key, self.sort_descending, self.group_mode = "name", False, "none"
         self.filter_pattern = ""
         self.recent = RecentItems(self.settings)
+        self.program_history = ProgramHistory(self.settings)
 
         # Models
         self.file_model = self._create_file_model()
@@ -875,6 +881,7 @@ class ModernExplorer(QMainWindow):
         open_location_action = menu.addAction("Open File Location")
         new_tab_action = menu.addAction("Open in New Tab")
         new_tab_action.setEnabled(os.path.isdir(paths[0]))
+        self._add_open_with_send_to(menu, paths)
         menu.addSeparator()
         cut_action = menu.addAction("Cut")
         copy_action = menu.addAction("Copy")
@@ -958,6 +965,8 @@ class ModernExplorer(QMainWindow):
         cut_action = menu.addAction("Cut")
         copy_action = menu.addAction("Copy")
         copy_path_action = menu.addAction("Copy as Path")
+        menu.addSeparator()
+        self._add_open_with_send_to(menu, paths)
         menu.addSeparator()
         compress_action = menu.addAction("Compress to ZIP")
         extract_action = extract_to_action = None
@@ -1555,6 +1564,79 @@ class ModernExplorer(QMainWindow):
         except OSError as e:
             QMessageBox.critical(self, "Error", f"Could not create file: {e}")
 
+    # -------------------------- Open with / Send to --------------------------
+
+    def _add_open_with_send_to(self, menu, paths, from_pane=False):
+        """Add "Open with" (files only) and "Send to" submenus to a context menu."""
+        if paths and all(os.path.isfile(p) for p in paths):
+            open_menu = menu.addMenu("Open with")
+            for program in self.program_history.programs_for(paths[0]):
+                open_menu.addAction(program_display_name(program),
+                                    lambda prog=program: self.open_with_program(paths, prog))
+            if open_menu.actions():
+                open_menu.addSeparator()
+            if len(paths) == 1 and system_chooser_command(paths[0]):
+                open_menu.addAction("Choose another app...", lambda: self._open_system_chooser(paths[0]))
+            open_menu.addAction("Choose program...", lambda: self.choose_program_for(paths))
+
+        send_menu = menu.addMenu("Send to")
+        send_menu.addAction("Compressed (zip) folder", lambda: self.compress_files(paths))
+        send_menu.addSeparator()
+        for location, label in ((QStandardPaths.StandardLocation.DesktopLocation, "Desktop"),
+                                (QStandardPaths.StandardLocation.DocumentsLocation, "Documents")):
+            folder = QStandardPaths.writableLocation(location)
+            if folder and os.path.isdir(folder):
+                send_menu.addAction(label, lambda f=folder: self.send_to_folder(paths, f))
+        for favorite in self.navigation_panel.favorites:
+            if os.path.isdir(favorite):
+                send_menu.addAction(os.path.basename(os.path.normpath(favorite)) or favorite,
+                                    lambda f=favorite: self.send_to_folder(paths, f))
+        other = self.other_pane_folder(from_pane)
+        if self.folder_pane.isVisible() and other:
+            send_menu.addAction("Other pane", lambda: self.send_to_folder(paths, other))
+        send_menu.addSeparator()
+        send_menu.addAction("Choose folder...", lambda: self._send_to_chosen_folder(paths))
+
+    def open_with_program(self, paths, program):
+        """Open files with a specific program (no shell involved)."""
+        argv = launch_command(program, paths)
+        started, _ = QProcess.startDetached(argv[0], argv[1:])
+        if started:
+            self.program_history.remember(paths[0], program)
+            for path in paths:
+                self.recent.add_file(path)
+        else:
+            QMessageBox.warning(self, "Open with", f"Could not start {program_display_name(program)}.")
+
+    def choose_program_for(self, paths):
+        """Pick a program file and open the files with it."""
+        if IS_WINDOWS:
+            start = os.environ.get("ProgramFiles", "C:\\")
+        elif os.path.isdir("/Applications"):
+            start = "/Applications"
+        else:
+            start = "/usr/bin"
+        program, _ = QFileDialog.getOpenFileName(self, "Choose a program to open the file with", start)
+        if program:
+            self.open_with_program(paths, program)
+
+    def _open_system_chooser(self, path):
+        argv = system_chooser_command(path)
+        started, _ = QProcess.startDetached(argv[0], argv[1:])
+        if not started:
+            self.choose_program_for([path])
+
+    def send_to_folder(self, paths, folder):
+        """Copy items into folder (like Explorer's Send to)."""
+        if self.transfer_files(paths, folder, is_cut=False):
+            name = os.path.basename(os.path.normpath(folder)) or folder
+            self.status_label.setText(f"Sent {len(paths)} item(s) to {name}")
+
+    def _send_to_chosen_folder(self, paths):
+        folder = QFileDialog.getExistingDirectory(self, "Send to folder", os.path.dirname(paths[0]))
+        if folder:
+            self.send_to_folder(paths, folder)
+
     # -------------------------- Archives --------------------------
 
     def _run_job(self, title, label, func, on_success):
@@ -1908,6 +1990,7 @@ class ModernExplorer(QMainWindow):
             other = self.other_pane_folder(from_pane=True) is not None
             menu.addAction("Copy to Other Pane", lambda: self.send_to_other_pane(paths, True, False)).setEnabled(other)
             menu.addAction("Move to Other Pane", lambda: self.send_to_other_pane(paths, True, True)).setEnabled(other)
+            self._add_open_with_send_to(menu, paths, from_pane=True)
             menu.addSeparator()
             menu.addAction("Cut", lambda: self.cut_selected_files(paths))
             menu.addAction("Copy", lambda: self.copy_selected_files(paths))
@@ -2201,6 +2284,7 @@ class ModernExplorer(QMainWindow):
             menu.addSeparator()
             menu.addAction("Copy", lambda: self.copy_selected_files(paths))
             menu.addAction("Copy as Path", lambda: QApplication.clipboard().setText("\n".join(paths)))
+            self._add_open_with_send_to(menu, paths)
             menu.addAction("Remove from Recent", lambda: self._forget_recent(paths))
             menu.addSeparator()
             menu.addAction("Properties", lambda: self.show_properties(paths[0])).setEnabled(len(paths) == 1)

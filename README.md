@@ -19,6 +19,8 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
 - Recent page in the sidebar: folders you visited and files you opened, newest first
 - Multi-threaded search with filters for date, size and file type
   (prefix a search with `AllDrives:` to search every drive)
+- Open with: pick a program (remembered per file type) or, on Windows, the system's app chooser;
+  Send to: a zip, Desktop, Documents, a favorite, the other pane or any folder
 - Copy, cut, paste, rename and delete, using the system clipboard so it works with other file managers
 - Delete moves items to the Recycle Bin / Trash; undo for copy, move and rename
 - Two panes side by side (Ctrl+Shift+D): each with its own path bar and history; commands apply to
@@ -87,6 +89,7 @@ shadows_explorer/
 │   ├── bulk_rename.py      Bulk rename rules and safe two-phase renaming
 │   ├── file_types.py       File extension → category (image, code, pdf, ...)
 │   ├── grouping.py         Sorting and grouping rules
+│   ├── open_with.py        Open-with commands and remembered programs
 │   ├── recent.py           Recent files/folders and the live filter pattern
 │   ├── safety.py           Protected folders, open/delete checks, Recycle Bin
 │   ├── search.py           Multi-threaded search engine and filters
