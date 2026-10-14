@@ -9,7 +9,7 @@ import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from icons import file_kind
+from shadows_explorer.core.file_types import file_kind
 
 SORT_KEYS = ("name", "date", "size", "type")
 GROUP_MODES = ("none", "type", "date", "size")

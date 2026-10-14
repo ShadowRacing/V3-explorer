@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 from PyQt6.QtCore import Qt
 
-from file_searcher import FileSearcher, passes_filters, remove_nested_locations
+from shadows_explorer.core.search import FileSearcher, passes_filters, remove_nested_locations
 
 
 def test_type_filter():

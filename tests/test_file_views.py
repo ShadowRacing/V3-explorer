@@ -1,6 +1,6 @@
 from PyQt6.QtCore import Qt
 
-from file_views import same_device, should_move
+from shadows_explorer.ui.file_views import same_device, should_move
 
 NO_KEYS = Qt.KeyboardModifier.NoModifier
 
@@ -28,7 +28,7 @@ def test_list_view_selection_is_found(qapp):
     # nothing and Copy/Delete/menus ignored the selection in icon and list views
     from PyQt6.QtGui import QStandardItem, QStandardItemModel
     from PyQt6.QtWidgets import QListView
-    from explorer import ModernExplorer
+    from shadows_explorer.ui.main_window import ModernExplorer
 
     model = QStandardItemModel(0, 4)
     for name in ("a", "b", "c"):
@@ -45,7 +45,7 @@ def test_list_view_selection_is_found(qapp):
 
 def test_load_thumbnail(qapp, tmp_path):
     from PyQt6.QtGui import QColor, QImage
-    from thumbnails import load_thumbnail
+    from shadows_explorer.ui.thumbnails import load_thumbnail
 
     image = QImage(400, 200, QImage.Format.Format_RGB32)
     image.fill(QColor("red"))

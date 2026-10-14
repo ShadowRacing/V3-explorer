@@ -12,7 +12,7 @@ from datetime import datetime
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from utils import is_within
+from shadows_explorer.core.utils import is_within
 
 TYPE_EXTENSIONS = {
     'documents': {'.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.rtf', '.md', '.csv'},

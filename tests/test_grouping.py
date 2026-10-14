@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from grouping import Entry, date_group, group_entries, list_entries, sort_entries
+from shadows_explorer.core.grouping import Entry, date_group, group_entries, list_entries, sort_entries
 
 TODAY = date(2026, 10, 14)  # A Wednesday
 

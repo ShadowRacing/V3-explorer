@@ -21,30 +21,30 @@ from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout,
 from PyQt6.QtCore import Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings, QFileSystemWatcher
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 
-from theme_manager import ThemeManager
-from file_operation_safety_manager import FileOperationSafetyManager
-from navigation_panel import NavigationPanel
-from file_views import FileListView, FileTreeView
-from icons import FileIconProvider, file_type_icon, ui_icon
-from archive_ops import (ArchiveCancelled, archive_stem, archive_top_level_names, create_zip,
+from shadows_explorer.theme.theme_manager import ThemeManager
+from shadows_explorer.core.safety import FileOperationSafetyManager
+from shadows_explorer.ui.navigation_panel import NavigationPanel
+from shadows_explorer.ui.file_views import FileListView, FileTreeView
+from shadows_explorer.theme.icons import FileIconProvider, file_type_icon, ui_icon
+from shadows_explorer.core.archive import (ArchiveCancelled, archive_stem, archive_top_level_names, create_zip,
                          extract_archive, extract_destination, is_archive, suggest_zip_path)
-from background import BackgroundJob
-from bulk_rename import execute_renames
-from bulk_rename_dialog import BulkRenameDialog
-from dual_pane import FolderPane
-from thumbnails import ThumbnailFileSystemModel
-from grouping import GROUP_MODES, SORT_KEYS, group_entries, list_entries, sort_entries
-from grouped_view import GroupedFolderView
-from grouping import Entry
-from recent import RecentItems, filter_pattern
-from breadcrumb_bar import FixedBreadcrumbBar
-from drive_components import DrivesView
-from preview_pane import PreviewPane
-from file_searcher import FileSearcher
-from search_results_model import SearchResultsModel, PATH_ROLE
-from settings_dialog import SettingsDialog
-from properties_dialog import PropertiesDialog
-from utils import (IS_WINDOWS, NavigationHistory, format_size, normalize_path, paths_equal,
+from shadows_explorer.core.background import BackgroundJob
+from shadows_explorer.core.bulk_rename import execute_renames
+from shadows_explorer.ui.dialogs.bulk_rename import BulkRenameDialog
+from shadows_explorer.ui.dual_pane import FolderPane
+from shadows_explorer.ui.thumbnails import ThumbnailFileSystemModel
+from shadows_explorer.core.grouping import GROUP_MODES, SORT_KEYS, group_entries, list_entries, sort_entries
+from shadows_explorer.ui.grouped_view import GroupedFolderView
+from shadows_explorer.core.grouping import Entry
+from shadows_explorer.core.recent import RecentItems, filter_pattern
+from shadows_explorer.ui.breadcrumb_bar import FixedBreadcrumbBar
+from shadows_explorer.ui.drives_view import DrivesView
+from shadows_explorer.ui.preview_pane import PreviewPane
+from shadows_explorer.core.search import FileSearcher
+from shadows_explorer.ui.search_results_model import SearchResultsModel, PATH_ROLE
+from shadows_explorer.ui.dialogs.settings import SettingsDialog
+from shadows_explorer.ui.dialogs.properties import PropertiesDialog
+from shadows_explorer.core.utils import (IS_WINDOWS, NavigationHistory, format_size, normalize_path, paths_equal,
                    is_within, unique_target_path, is_valid_filename)
 
 # Clipboard format marking a "cut" (move) rather than a copy

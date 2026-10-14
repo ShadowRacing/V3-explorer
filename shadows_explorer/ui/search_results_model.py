@@ -7,8 +7,8 @@ and displays search results.
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
 from PyQt6.QtCore import Qt
 
-from icons import file_icon_for_path
-from utils import format_size
+from shadows_explorer.theme.icons import file_icon_for_path
+from shadows_explorer.core.utils import format_size
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1

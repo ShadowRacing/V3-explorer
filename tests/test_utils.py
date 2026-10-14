@@ -1,6 +1,6 @@
 import os
 
-from utils import (NavigationHistory, format_size, is_valid_filename, is_within,
+from shadows_explorer.core.utils import (NavigationHistory, format_size, is_valid_filename, is_within,
                    normalize_path, paths_equal, unique_target_path)
 
 

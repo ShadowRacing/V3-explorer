@@ -11,11 +11,11 @@ import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QAbstractItemView
 from PyQt6.QtCore import Qt, QSize, QDir, pyqtSignal
 
-from breadcrumb_bar import FixedBreadcrumbBar
-from file_views import FileTreeView
-from icons import FileIconProvider, ui_icon
-from thumbnails import ThumbnailFileSystemModel
-from utils import NavigationHistory, normalize_path
+from shadows_explorer.ui.breadcrumb_bar import FixedBreadcrumbBar
+from shadows_explorer.ui.file_views import FileTreeView
+from shadows_explorer.theme.icons import FileIconProvider, ui_icon
+from shadows_explorer.ui.thumbnails import ThumbnailFileSystemModel
+from shadows_explorer.core.utils import NavigationHistory, normalize_path
 
 
 class FolderPane(QWidget):

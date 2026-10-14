@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel, QPushBut
                             QHBoxLayout, QStyle, QFileIconProvider)
 from PyQt6.QtCore import Qt, QFileInfo, pyqtSignal
 
-from utils import format_size
+from shadows_explorer.core.utils import format_size
 
 
 def folder_size(path, cancel_event=None):

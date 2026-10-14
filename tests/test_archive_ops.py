@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from archive_ops import (ArchiveCancelled, UnsafeArchiveError, archive_stem, create_zip,
+from shadows_explorer.core.archive import (ArchiveCancelled, UnsafeArchiveError, archive_stem, create_zip,
                          extract_archive, extract_destination, is_archive, suggest_zip_path)
 
 

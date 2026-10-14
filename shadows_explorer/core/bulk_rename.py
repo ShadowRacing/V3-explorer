@@ -13,7 +13,7 @@ import re
 import uuid
 from dataclasses import dataclass
 
-from utils import IS_WINDOWS, is_valid_filename
+from shadows_explorer.core.utils import IS_WINDOWS, is_valid_filename
 
 CASE_MODES = ("unchanged", "lower", "upper", "title")
 

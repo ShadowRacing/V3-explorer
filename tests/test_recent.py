@@ -1,6 +1,6 @@
 import fnmatch
 
-from recent import MAX_FOLDERS, RecentItems, filter_pattern
+from shadows_explorer.core.recent import MAX_FOLDERS, RecentItems, filter_pattern
 
 
 class FakeSettings(dict):

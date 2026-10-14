@@ -40,8 +40,15 @@ Requires Python 3.9 or newer.
 
 ```bash
 pip install -r requirements.txt   # Pygments is optional; it adds code highlighting
-python main.py              # opens your home folder
-python main.py C:\Projects  # or start in a specific folder
+python main.py                    # opens your home folder
+python main.py C:\Projects        # or start in a specific folder
+```
+
+Or install it as a package, which adds a `shadows-explorer` command:
+
+```bash
+pip install .                     # or: pip install ".[highlighting]"
+shadows-explorer                  # same as: python -m shadows_explorer
 ```
 
 ## Keyboard shortcuts
@@ -69,35 +76,45 @@ python main.py C:\Projects  # or start in a specific folder
 
 ## Project layout
 
-| File | Purpose |
-|---|---|
-| `main.py` | Entry point |
-| `explorer.py` | Main window: navigation, file operations, search UI |
-| `navigation_panel.py` | Sidebar, including Favorites |
-| `file_views.py` | Folder views with drag and drop |
-| `dual_pane.py` | The second folder pane |
-| `grouping.py`, `grouped_view.py` | Sorting/grouping rules and the grouped list |
-| `recent.py` | Recent files and folders, and the filter pattern |
-| `thumbnails.py` | Background picture thumbnails for the icon view |
-| `bulk_rename.py`, `bulk_rename_dialog.py` | Bulk rename logic and dialog |
-| `archive_ops.py`, `background.py` | Zip/unzip, and running slow jobs off the UI thread |
-| `breadcrumb_bar.py` | Clickable path bar |
-| `drive_components.py` | "This PC" drive overview |
-| `file_searcher.py` | Background search engine and filters |
-| `search_results_model.py` | Search results table |
-| `preview_pane.py` | File preview panel |
-| `properties_dialog.py` | Properties dialog |
-| `file_operation_safety_manager.py` | Protected folders, open/delete safety checks, Recycle Bin |
-| `theme_manager.py`, `settings_dialog.py` | Themes (one stylesheet, a color palette per theme) and settings |
-| `icons.py` | The app's own SVG icon set, recolored per theme |
-| `utils.py` | Shared helpers (no Qt widgets), covered by unit tests |
+```
+main.py                     Starts the app from a source checkout
+pyproject.toml              Package metadata and the shadows-explorer command
+shadows_explorer/
+├── app.py                  Creates the QApplication and main window
+├── core/                   File-system logic, no widgets (unit tested)
+│   ├── archive.py          Zip/unzip, safe against archives escaping their folder
+│   ├── background.py       Runs slow jobs off the UI thread
+│   ├── bulk_rename.py      Bulk rename rules and safe two-phase renaming
+│   ├── file_types.py       File extension → category (image, code, pdf, ...)
+│   ├── grouping.py         Sorting and grouping rules
+│   ├── recent.py           Recent files/folders and the live filter pattern
+│   ├── safety.py           Protected folders, open/delete checks, Recycle Bin
+│   ├── search.py           Multi-threaded search engine and filters
+│   └── utils.py            Paths, sizes, navigation history
+├── ui/                     Windows, views and panes
+│   ├── main_window.py      The main window: navigation, tabs, file operations, search
+│   ├── navigation_panel.py Sidebar with Favorites, Recent, locations and drives
+│   ├── breadcrumb_bar.py   Clickable, editable path bar
+│   ├── file_views.py       Folder views with drag and drop and in-place rename
+│   ├── dual_pane.py        The second folder pane
+│   ├── grouped_view.py     The grouped list
+│   ├── thumbnails.py       Background picture thumbnails
+│   ├── preview_pane.py     File preview panel
+│   ├── drives_view.py      "This PC" drive overview
+│   ├── search_results_model.py
+│   └── dialogs/            Properties, settings and bulk rename dialogs
+└── theme/
+    ├── theme_manager.py    One stylesheet, a color palette per theme
+    └── icons.py            The app's own SVG icon set
+tests/                      pytest suite (runs without a display)
+```
 
 ## Development
 
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest        # run the tests
-python -m pyflakes *.py # lint
+python -m pyflakes main.py shadows_explorer tests  # lint
 ```
 
 The tests need no display; they run Qt with the `offscreen` platform.
