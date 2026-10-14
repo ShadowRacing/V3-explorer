@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout,
                             QInputDialog, QDialog, QTextEdit, QFrame, QDateEdit, QRadioButton, QGroupBox,
                             QSpinBox, QCheckBox, QApplication, QStackedWidget, QProgressDialog,
                             QTabBar, QScrollArea, QFileDialog)
-from PyQt6.QtCore import Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings
+from PyQt6.QtCore import Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings, QFileSystemWatcher
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 
 from theme_manager import ThemeManager
@@ -32,6 +32,8 @@ from bulk_rename import execute_renames
 from bulk_rename_dialog import BulkRenameDialog
 from dual_pane import FolderPane
 from thumbnails import ThumbnailFileSystemModel
+from grouping import GROUP_MODES, SORT_KEYS, group_entries, list_entries, sort_entries
+from grouped_view import GroupedFolderView
 from breadcrumb_bar import FixedBreadcrumbBar
 from drive_components import DrivesView
 from preview_pane import PreviewPane
@@ -53,6 +55,11 @@ PROGRESS_DIALOG_THRESHOLD = 5  # show a progress dialog above this many items
 MAX_UNDO_HISTORY = 20
 
 VIEW_ICONS, VIEW_LIST, VIEW_DETAILS = range(3)
+
+# QFileSystemModel column for each sort key
+SORT_COLUMNS = {"name": 0, "size": 1, "type": 2, "date": 3}
+SORT_LABELS = {"name": "Name", "date": "Date modified", "size": "Size", "type": "Type"}
+GROUP_LABELS = {"none": "(None)", "type": "Type", "date": "Date modified", "size": "Size"}
 
 # Context menu entries that get an icon (see _decorate_menu)
 MENU_ICONS = {
@@ -118,6 +125,7 @@ class ModernExplorer(QMainWindow):
         self.current_view = "files"  # Options: "files", "drives", "search"
         self._folder_status = ""
         self.show_hidden = False
+        self.sort_key, self.sort_descending, self.group_mode = "name", False, "none"
 
         # Models
         self.file_model = self._create_file_model()
@@ -184,6 +192,8 @@ class ModernExplorer(QMainWindow):
         self.file_model.setFilter(filters)
         self.folder_pane.set_show_hidden(show)
         self.show_hidden = show
+        if self.group_mode != "none" and hasattr(self, "grouped_view"):
+            self._refresh_grouped()
         self.settings.setValue("show_hidden", show)
         self.update_status()
 
@@ -347,6 +357,17 @@ class ModernExplorer(QMainWindow):
 
         self.main_layout.addWidget(tab_row)
 
+    def _menu_button(self, icon_name, text, tooltip):
+        """A text-and-icon tool button that opens a menu."""
+        button = QToolButton()
+        self._themed(button, icon_name)
+        button.setText(text)
+        button.setToolTip(tooltip)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        button.setMenu(QMenu(button))
+        return button
+
     def _add_tab_close_button(self, index):
         """Put a themed close button on a tab."""
         button = QToolButton()
@@ -455,6 +476,13 @@ class ModernExplorer(QMainWindow):
         self.hidden_files_checkbox.toggled.connect(self._set_show_hidden)
         view_layout.addWidget(self.hidden_files_checkbox)
 
+        self.sort_button = self._menu_button("sort", "Sort", "Sort items")
+        self.sort_button.menu().aboutToShow.connect(self._fill_sort_menu)
+        view_layout.addWidget(self.sort_button)
+        self.group_button = self._menu_button("group", "Group", "Group items (shown as a list)")
+        self.group_button.menu().aboutToShow.connect(self._fill_group_menu)
+        view_layout.addWidget(self.group_button)
+
         view_layout.addStretch()
 
         # Search status
@@ -501,6 +529,21 @@ class ModernExplorer(QMainWindow):
         self.detail_view.setIconSize(QSize(18, 18))
         self.detail_view.setColumnWidth(0, 320)
 
+        # Grouped view, used instead of the others while grouping is on
+        self.grouped_view = GroupedFolderView()
+        self.grouped_view.activated.connect(self._grouped_activated)
+        self.grouped_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.grouped_view.customContextMenuRequested.connect(self.show_context_menu)
+        self.grouped_view.selectionModel().selectionChanged.connect(self.on_file_selection_changed)
+        self.group_watcher = QFileSystemWatcher(self)
+        self.group_refresh_timer = QTimer(self)
+        self.group_refresh_timer.setSingleShot(True)
+        self.group_refresh_timer.setInterval(300)  # Batch bursts of file changes
+        self.group_refresh_timer.timeout.connect(self._refresh_grouped)
+        self.group_refresh_timer.timeout.connect(self.update_status)
+        self.group_watcher.directoryChanged.connect(lambda _: self.group_refresh_timer.start())
+        self.detail_view.header().sortIndicatorChanged.connect(self._on_header_sort)
+
         # Search results view
         self.search_view = QTreeView()
         self.search_view.setModel(self.search_results_model)
@@ -524,6 +567,7 @@ class ModernExplorer(QMainWindow):
         self.views_stack.addWidget(self.detail_view)
         self.views_stack.addWidget(self.search_view)
         self.views_stack.addWidget(self.drives_view)
+        self.views_stack.addWidget(self.grouped_view)
         content_frame_layout.addWidget(self.views_stack)
 
         self.main_splitter.addWidget(self.content_frame)
@@ -659,6 +703,11 @@ class ModernExplorer(QMainWindow):
         view_mode = int(self.settings.value("view_mode", VIEW_ICONS))
         if view_mode in (VIEW_ICONS, VIEW_LIST, VIEW_DETAILS):
             self.view_mode_combo.setCurrentIndex(view_mode)
+        sort_key = self.settings.value("sort_key", "name")
+        self.apply_sort(sort_key if sort_key in SORT_KEYS else "name",
+                        self.settings.value("sort_descending", False, type=bool))
+        group_mode = self.settings.value("group_mode", "none")
+        self.set_group_mode(group_mode if group_mode in GROUP_MODES else "none")
         # Not covered by currentIndexChanged when the saved mode is the default
         self.file_model.set_thumbnails_enabled(self.view_mode_combo.currentIndex() == VIEW_ICONS)
 
@@ -690,8 +739,11 @@ class ModernExplorer(QMainWindow):
     # -------------------------- Selection helpers --------------------------
 
     def _active_file_view(self):
-        """The icon/list view or the details view, whichever is showing."""
-        return self.detail_view if self.views_stack.currentWidget() is self.detail_view else self.file_view
+        """The folder view that is showing: icon/list, details or grouped."""
+        current = self.views_stack.currentWidget()
+        if current in (self.detail_view, self.grouped_view):
+            return current
+        return self.file_view
 
     @staticmethod
     def _selected_first_column(view):
@@ -709,7 +761,11 @@ class ModernExplorer(QMainWindow):
 
     def get_selected_file_paths(self):
         """Paths selected in the folder view (one per row)."""
-        return [self.file_model.filePath(index) for index in self._selected_first_column(self._active_file_view())]
+        view = self._active_file_view()
+        if view is self.grouped_view:
+            paths = (view.path_at(index) for index in self._selected_first_column(view))
+            return [path for path in paths if path]
+        return [self.file_model.filePath(index) for index in self._selected_first_column(view)]
 
     def get_selected_search_paths(self):
         """Paths selected in the search results (one per row)."""
@@ -1301,7 +1357,7 @@ class ModernExplorer(QMainWindow):
         """Open the in-place rename editor on path if a folder view shows it."""
         if self.pane_is_active():
             view, model, folder = self.folder_pane.view, self.folder_pane.model, self.folder_pane.current_path
-        elif self.current_view == "files":
+        elif self.current_view == "files" and self._active_file_view() is not self.grouped_view:
             view, model, folder = self._active_file_view(), self.file_model, self.current_path
         else:
             return False
@@ -1654,6 +1710,81 @@ class ModernExplorer(QMainWindow):
         self.status_label.setText(f"Undid {op['type']} operation")
         self.update_status()
 
+    # -------------------------- Sorting and grouping --------------------------
+
+    def _fill_sort_menu(self):
+        menu = self.sort_button.menu()
+        menu.clear()
+        for key in ("name", "date", "size", "type"):
+            action = menu.addAction(SORT_LABELS[key], lambda k=key: self.apply_sort(k, self.sort_descending))
+            action.setCheckable(True)
+            action.setChecked(self.sort_key == key)
+        menu.addSeparator()
+        for descending, label in ((False, "Ascending"), (True, "Descending")):
+            action = menu.addAction(label, lambda d=descending: self.apply_sort(self.sort_key, d))
+            action.setCheckable(True)
+            action.setChecked(self.sort_descending == descending)
+
+    def _fill_group_menu(self):
+        menu = self.group_button.menu()
+        menu.clear()
+        for mode in GROUP_MODES:
+            action = menu.addAction(GROUP_LABELS[mode], lambda m=mode: self.set_group_mode(m))
+            action.setCheckable(True)
+            action.setChecked(self.group_mode == mode)
+
+    def apply_sort(self, key, descending):
+        """Sort every view by key ("name", "date", "size", "type")."""
+        self.sort_key, self.sort_descending = key, descending
+        order = Qt.SortOrder.DescendingOrder if descending else Qt.SortOrder.AscendingOrder
+        header = self.detail_view.header()
+        header.blockSignals(True)  # Don't loop back through _on_header_sort
+        header.setSortIndicator(SORT_COLUMNS[key], order)
+        header.blockSignals(False)
+        self.file_model.sort(SORT_COLUMNS[key], order)
+        self.settings.setValue("sort_key", key)
+        self.settings.setValue("sort_descending", descending)
+        if self.group_mode != "none" and self.current_view == "files":
+            self._refresh_grouped()
+
+    def _on_header_sort(self, column, order):
+        """A details-view header click also sets the sort for the other views."""
+        key = next((k for k, c in SORT_COLUMNS.items() if c == column), "name")
+        self.apply_sort(key, order == Qt.SortOrder.DescendingOrder)
+
+    def set_group_mode(self, mode):
+        """Group items by "type", "date" or "size", or "none"."""
+        self.group_mode = mode
+        self.settings.setValue("group_mode", mode)
+        self.group_button.setText("Group" if mode == "none" else f"Group: {GROUP_LABELS[mode]}")
+        if mode == "none" and self.group_watcher.directories():
+            self.group_watcher.removePaths(self.group_watcher.directories())
+        if self.current_view == "files":
+            self._show_file_view()
+            self._update_selection_status()
+
+    def _refresh_grouped(self):
+        """Rebuild the grouped list for the current folder and watch it for changes."""
+        if self.group_mode == "none" or self.current_view != "files":
+            return
+        try:
+            entries = list_entries(self.current_path, self.show_hidden)
+        except OSError as e:
+            self.status_label.setText(f"Error reading directory: {e}")
+            entries = []
+        groups = group_entries(sort_entries(entries, self.sort_key, self.sort_descending), self.group_mode)
+        self.grouped_view.populate(groups)
+        watched = self.group_watcher.directories()
+        if watched != [self.current_path]:
+            if watched:
+                self.group_watcher.removePaths(watched)
+            self.group_watcher.addPath(self.current_path)
+
+    def _grouped_activated(self, index):
+        path = self.grouped_view.path_at(index)
+        if path:
+            self.open_path(path)
+
     # -------------------------- Dual pane --------------------------
 
     def set_dual_pane_visible(self, visible, path=None):
@@ -1932,8 +2063,11 @@ class ModernExplorer(QMainWindow):
         self.file_view.setMovement(QListView.Movement.Static)
 
     def _show_file_view(self):
-        """Show the folder view that matches the selected view mode."""
-        if self.view_mode_combo.currentIndex() == VIEW_DETAILS:
+        """Show the folder view that matches the selected view mode (or grouping)."""
+        if self.group_mode != "none":
+            self._refresh_grouped()
+            self.views_stack.setCurrentWidget(self.grouped_view)
+        elif self.view_mode_combo.currentIndex() == VIEW_DETAILS:
             self.views_stack.setCurrentWidget(self.detail_view)
         else:
             self.views_stack.setCurrentWidget(self.file_view)

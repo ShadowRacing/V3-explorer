@@ -195,6 +195,7 @@ QToolButton:hover {{ background-color: {hover}; }}
 QToolButton:pressed {{ background-color: {pressed}; }}
 QToolButton:checked {{ background-color: {checked}; border: {pressed_border}; }}
 QToolButton:disabled {{ color: {muted}; }}
+QToolButton::menu-indicator {{ image: none; width: 0px; }}
 
 /* ---- Tabs ---- */
 QTabBar {{ background: transparent; qproperty-drawBase: 0; }}

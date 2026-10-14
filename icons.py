@@ -64,6 +64,8 @@ UI_ICONS = {
                '<path d="M12 11v6M9.5 14.5L12 17l2.5-2.5"/>',
     "dual": '<rect x="3" y="5" width="8" height="14" rx="1.5"/><rect x="13" y="5" width="8" height="14" rx="1.5"/>',
     "copy_to": '<rect x="3" y="5" width="8" height="14" rx="1.5"/><path d="M14 12h7M18 9l3 3-3 3"/>',
+    "sort": '<path d="M7 4v16M3.5 16.5L7 20l3.5-3.5M14 6h7M14 11h5M14 16h3"/>',
+    "group": '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M6 11h12M6 15h12M6 19h8"/>',
     "hidden": '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
 }
 
