@@ -1,109 +1,257 @@
 """
 Settings dialog module for Shadows File Explorer.
 
-This module provides the SettingsDialog class which allows users
-to configure application settings like themes.
+Pages are listed on the left: Appearance (theme) and Performance (threads,
+caches, size limits and refresh rates, with presets). Changes apply at once.
 """
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                            QComboBox, QPushButton, QGroupBox)
+from dataclasses import fields, replace
+
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QGroupBox,
+                             QListWidget, QStackedWidget, QWidget, QFormLayout, QSpinBox, QCheckBox,
+                             QScrollArea, QFrame)
 from PyQt6.QtCore import Qt, pyqtSignal
+
+from shadows_explorer.core.performance import (LIMITS, PRESET_DESCRIPTIONS, PRESETS, PerformanceSettings)
+
+# (setting name, label, suffix, tooltip) per group; booleans have no suffix
+PERFORMANCE_GROUPS = [
+    ("Thumbnails", [
+        ("thumbnails", "Show picture thumbnails", None,
+         "Off: pictures show a type icon in the icon view (fastest on slow disks and network folders)"),
+        ("thumbnail_threads", "Threads making thumbnails", "",
+         "More threads fill a folder of pictures faster, but use more CPU"),
+        ("thumbnail_cache", "Thumbnails kept in memory", " thumbnails",
+         "Bigger caches make going back to a folder instant, but use more memory "
+         "(about 64 KB each, more when zoomed in)"),
+        ("thumbnail_max_mb", "Skip pictures larger than", " MB", "Very large pictures are slow to decode"),
+    ]),
+    ("Search", [
+        ("search_threads", "Search threads", "",
+         "Folders searched at the same time. Automatic uses one per CPU core; fewer keeps the PC responsive, "
+         "more can help on fast SSDs"),
+        ("search_hidden_folders", "Search inside hidden folders", None,
+         "Also look inside folders whose name starts with a dot (slower, more results)"),
+        ("content_max_mb", "Search inside files up to", " MB",
+         "content:\"...\" searches read each file; larger files are skipped because they take long"),
+    ]),
+    ("Folders and drives", [
+        ("folder_size_threads", "Threads measuring folder sizes", "",
+         "Used for the folder sizes in the details view"),
+        ("folder_refresh_ms", "Wait before refreshing grouped folders", " ms",
+         "Changes that come in bursts (copying many files) are shown together after this pause"),
+        ("drive_refresh_s", "Check for new drives every", " s",
+         "How quickly USB sticks and new drives appear. Off: only when you press Refresh"),
+    ]),
+    ("Preview panel", [
+        ("preview_text_kb", "Preview text and code up to", " KB", "Longer files show their beginning"),
+        ("preview_image_mb", "Preview pictures up to", " MB", "Larger pictures show a note instead"),
+        ("preview_pdfs", "Preview PDF files", None, "Rendering the first page of big PDFs can take a moment"),
+    ]),
+    ("Memory", [
+        ("undo_steps", "Undo steps to remember", " steps", "How many copies, moves and renames Ctrl+Z can undo"),
+    ]),
+]
 
 
 class SettingsDialog(QDialog):
-    """Dialog for application settings including theme selection.
-    
-    This dialog provides:
-    - Theme selection and preview
-    - Settings persistence
-    - UI configuration options
-    
+    """The settings window.
+
+    Args:
+        theme_manager: ThemeManager instance
+        performance: The current PerformanceSettings
+        parent: Parent widget
+
     Signals:
         theme_changed: Emitted when theme is changed (theme_name)
+        performance_changed: A performance setting changed (PerformanceSettings)
+        clear_thumbnails_requested: "Clear thumbnail cache" was clicked
     """
-    
+
     theme_changed = pyqtSignal(str)
-    
-    def __init__(self, theme_manager, parent=None):
-        """Initialize the settings dialog.
-        
-        Args:
-            theme_manager: ThemeManager instance
-            parent: Parent widget
-        """
+    performance_changed = pyqtSignal(object)
+    clear_thumbnails_requested = pyqtSignal()
+
+    def __init__(self, theme_manager, performance=None, parent=None):
         super().__init__(parent)
         self.theme_manager = theme_manager
+        self.performance = performance or PerformanceSettings()
+        self.editors = {}
+        self._updating = False
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(400)
-        
+        self.resize(760, 620)
         self.setup_ui()
-    
+
     def setup_ui(self):
-        """Set up the user interface."""
         layout = QVBoxLayout(self)
-        
-        # Appearance section
-        appearance_group = QGroupBox("Appearance")
-        appearance_layout = QVBoxLayout(appearance_group)
-        
-        # Theme selection
-        theme_layout = QHBoxLayout()
-        theme_label = QLabel("Theme:")
-        theme_layout.addWidget(theme_label)
-        
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["System", "Light", "Dark", "Retro"])
-        
-        # Set current theme
-        current_theme = self.theme_manager.current_theme
-        if current_theme == "light":
-            self.theme_combo.setCurrentIndex(1)
-        elif current_theme == "dark":
-            self.theme_combo.setCurrentIndex(2)
-        elif current_theme == "retro":
-            self.theme_combo.setCurrentIndex(3)
-        else:  # system
-            self.theme_combo.setCurrentIndex(0)
-            
-        self.theme_combo.currentIndexChanged.connect(self.on_theme_changed)
-        theme_layout.addWidget(self.theme_combo)
-        appearance_layout.addLayout(theme_layout)
-        
-        # Theme preview
-        self.theme_preview = QLabel()
-        self.theme_preview.setMinimumHeight(100)
-        self.theme_preview.setAlignment(QLabel().alignment() | Qt.AlignmentFlag.AlignCenter)
-        self.update_theme_preview()
-        appearance_layout.addWidget(self.theme_preview)
-        
-        layout.addWidget(appearance_group)
-        
-        # Buttons
-        button_layout = QHBoxLayout()
-        
+        body = QHBoxLayout()
+
+        self.pages_list = QListWidget()
+        self.pages_list.setFixedWidth(170)
+        self.pages = QStackedWidget()
+        for name, page in (("Appearance", self._appearance_page()), ("Performance", self._performance_page())):
+            self.pages_list.addItem(name)
+            self.pages.addWidget(page)
+        self.pages_list.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.pages_list.setCurrentRow(0)
+        body.addWidget(self.pages_list)
+        body.addWidget(self.pages, 1)
+        layout.addLayout(body, 1)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch()
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.accept)
-        
-        button_layout.addStretch()
-        button_layout.addWidget(self.close_button)
-        
-        layout.addLayout(button_layout)
-    
+        buttons.addWidget(self.close_button)
+        layout.addLayout(buttons)
+
+    def show_page(self, name):
+        """Open the dialog on a page ("Appearance" or "Performance")."""
+        matches = self.pages_list.findItems(name, Qt.MatchFlag.MatchExactly)
+        if matches:
+            self.pages_list.setCurrentItem(matches[0])
+
+    # -------------------------- Appearance --------------------------
+
+    def _appearance_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        group = QGroupBox("Appearance")
+        group_layout = QVBoxLayout(group)
+
+        theme_layout = QHBoxLayout()
+        theme_layout.addWidget(QLabel("Theme:"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["System", "Light", "Dark", "Retro"])
+        names = ["system", "light", "dark", "retro"]
+        current = self.theme_manager.current_theme
+        self.theme_combo.setCurrentIndex(names.index(current) if current in names else 0)
+        self.theme_combo.currentIndexChanged.connect(self.on_theme_changed)
+        theme_layout.addWidget(self.theme_combo, 1)
+        group_layout.addLayout(theme_layout)
+
+        self.theme_preview = QLabel()
+        self.theme_preview.setMinimumHeight(100)
+        self.theme_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.update_theme_preview()
+        group_layout.addWidget(self.theme_preview)
+        layout.addWidget(group)
+        layout.addStretch()
+        return page
+
     def on_theme_changed(self, index):
-        """Handle theme selection change.
-        
-        Args:
-            index: Selected theme index
-        """
-        theme_names = ["system", "light", "dark", "retro"]
-        selected_theme = theme_names[index]
-        
+        selected_theme = ["system", "light", "dark", "retro"][index]
         self.theme_manager.set_theme(selected_theme)
         self.theme_changed.emit(selected_theme)
         self.update_theme_preview()
-    
+
     def update_theme_preview(self):
-        """Update the theme preview image."""
-        # This would normally show a preview image of the selected theme
-        # For simplicity, we'll just show the theme name
         theme = self.theme_manager.current_theme
         self.theme_preview.setText(f"Preview of {theme.capitalize()} Theme")
+
+    # -------------------------- Performance --------------------------
+
+    def _performance_page(self):
+        content = QWidget()
+        layout = QVBoxLayout(content)
+
+        # Presets
+        preset_group = QGroupBox("Preset")
+        preset_layout = QVBoxLayout(preset_group)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Tune for:"))
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems(list(PRESETS) + ["Custom"])
+        self.preset_combo.currentTextChanged.connect(self._apply_preset)
+        row.addWidget(self.preset_combo, 1)
+        preset_layout.addLayout(row)
+        self.preset_description = QLabel()
+        self.preset_description.setWordWrap(True)
+        self.preset_description.setObjectName("status_label")
+        preset_layout.addWidget(self.preset_description)
+        cores = PerformanceSettings.cpu_cores()
+        system = QLabel(f"This computer has {cores} CPU core{'s' if cores != 1 else ''}.")
+        system.setObjectName("status_label")
+        preset_layout.addWidget(system)
+        layout.addWidget(preset_group)
+
+        types = {f.name: f.type for f in fields(PerformanceSettings)}
+        for title, settings in PERFORMANCE_GROUPS:
+            group = QGroupBox(title)
+            form = QFormLayout(group)
+            form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+            for name, label, suffix, tooltip in settings:
+                if types[name] is bool:
+                    editor = QCheckBox(label)
+                    editor.toggled.connect(lambda value, n=name: self._set(n, value))
+                    form.addRow("", editor)
+                else:
+                    editor = QSpinBox()
+                    limit = LIMITS[name]
+                    editor.setRange(limit.low, limit.high)
+                    editor.setSuffix(suffix)
+                    editor.setMinimumWidth(150)
+                    if name == "search_threads":
+                        editor.setSpecialValueText(f"Automatic ({cores})")
+                    elif name == "drive_refresh_s":
+                        editor.setSpecialValueText("Off")
+                    editor.valueChanged.connect(lambda value, n=name: self._set(n, value))
+                    form.addRow(f"{label}:", editor)
+                editor.setToolTip(tooltip)
+                self.editors[name] = editor
+            if title == "Thumbnails":
+                clear = QPushButton("Clear Thumbnail Cache")
+                clear.setToolTip("Free the memory used by thumbnails; they are made again when needed")
+                clear.clicked.connect(self.clear_thumbnails_requested.emit)
+                form.addRow("", clear)
+            layout.addWidget(group)
+
+        reset_row = QHBoxLayout()
+        reset_row.addStretch()
+        reset = QPushButton("Restore Defaults")
+        reset.clicked.connect(lambda: self.preset_combo.setCurrentText("Balanced"))
+        reset_row.addWidget(reset)
+        layout.addLayout(reset_row)
+        layout.addStretch()
+
+        self._show_performance()
+
+        # The page is long, so it scrolls
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        return scroll
+
+    def _show_performance(self):
+        """Put the current settings in the editors without triggering changes."""
+        self._updating = True
+        for name, editor in self.editors.items():
+            value = getattr(self.performance, name)
+            if isinstance(editor, QCheckBox):
+                editor.setChecked(value)
+            else:
+                editor.setValue(value)
+        preset = self.performance.preset_name()
+        self.preset_combo.setCurrentText(preset)
+        self.preset_description.setText(PRESET_DESCRIPTIONS[preset])
+        self._updating = False
+
+    def _set(self, name, value):
+        if self._updating:
+            return
+        self.performance = replace(self.performance, **{name: value})
+        self._updating = True
+        preset = self.performance.preset_name()
+        self.preset_combo.setCurrentText(preset)
+        self.preset_description.setText(PRESET_DESCRIPTIONS[preset])
+        self._updating = False
+        self.performance_changed.emit(self.performance)
+
+    def _apply_preset(self, name):
+        if self._updating or name not in PRESETS:
+            if name == "Custom" and not self._updating:
+                self.preset_description.setText(PRESET_DESCRIPTIONS["Custom"])
+            return
+        self.performance = PRESETS[name]
+        self._show_performance()
+        self.performance_changed.emit(self.performance)

@@ -57,6 +57,9 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
   file name extensions on/off, select none and invert selection; right-click the details header to
   choose and auto-size columns
 - Drag folders onto FAVORITES in the sidebar to pin them
+- Settings → Performance: presets (Light, Balanced, Maximum) or your own values for thumbnail threads,
+  cache and size limits, search threads and hidden folders, content-search size limit, folder-size
+  threads, refresh rates, preview limits (text, pictures, PDFs) and undo steps; changes apply at once
 - Find Duplicates (right-click a folder): files with identical content, compared by size then hash;
   tick copies (or keep oldest/newest automatically) and send them to the Recycle Bin, never all copies
 - Analyze Disk Usage (right-click a folder): a size-sorted tree with share bars and the largest files
@@ -129,6 +132,7 @@ shadows_explorer/
 │   ├── grouping.py         Sorting and grouping rules
 │   ├── media_info.py       Photo EXIF and audio/video details
 │   ├── open_with.py        Open-with commands and remembered programs
+│   ├── performance.py      Performance settings and presets
 │   ├── recent.py           Recent files/folders and the live filter pattern
 │   ├── safety.py           Protected folders, open/delete checks, Recycle Bin
 │   ├── query.py            Search query language, content search, saved searches

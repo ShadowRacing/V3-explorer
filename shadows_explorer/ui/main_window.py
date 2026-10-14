@@ -51,6 +51,7 @@ from shadows_explorer.core.search import FileSearcher
 from shadows_explorer.core.query import QueryError, parse_query
 from shadows_explorer.ui.search_box import SEARCH_HELP, QueryCompleter
 from shadows_explorer.core.tags import TagStore
+from shadows_explorer.core.performance import PerformanceSettings
 from shadows_explorer.ui.tags import TagDialog, TagDotsDelegate, add_tags_submenu, tag_dot_icon
 from shadows_explorer.ui.search_results_model import SearchResultsModel, PATH_ROLE
 from shadows_explorer.ui.dialogs.settings import SettingsDialog
@@ -66,7 +67,6 @@ DROPEFFECT_COPY = 5  # DROPEFFECT_COPY | DROPEFFECT_LINK, as Explorer writes it
 DROPEFFECT_MOVE = 2
 
 PROGRESS_DIALOG_THRESHOLD = 5  # show a progress dialog above this many items
-MAX_UNDO_HISTORY = 20
 
 VIEW_ICONS, VIEW_LIST, VIEW_DETAILS = range(3)
 
@@ -198,6 +198,9 @@ class ModernExplorer(QMainWindow):
         self.drives_refresh_timer = QTimer(self)
         self.drives_refresh_timer.timeout.connect(self.refresh_drives)
         self.drives_refresh_timer.start(10000)
+
+        self.performance = PerformanceSettings.load(self.settings)
+        self.apply_performance()
 
     # -------------------------- Setup --------------------------
 
@@ -831,6 +834,7 @@ class ModernExplorer(QMainWindow):
             C("Properties", self.show_selected_properties, "Alt+Enter", bool(selection or folder)),
             C("Search Files", self._focus_search, "Ctrl+F"),
             C("Advanced Search", self.show_advanced_search),
+            C("Performance Settings", lambda: self.show_settings("Performance")),
             C("Save Search", self.save_current_search, "", self.is_searching),
             C("Filter This Folder", self._focus_filter, "Ctrl+E", in_files),
             C("Analyze Disk Usage", lambda: self.show_disk_usage(selection[0] if single_dir else folder), "",
@@ -1943,7 +1947,7 @@ class ModernExplorer(QMainWindow):
         self.operation_history.append({'type': op_type, 'items': items, 'timestamp': time.time()})
         if op_type in ('move', 'rename'):
             self._move_tags(items)
-        del self.operation_history[:-MAX_UNDO_HISTORY]
+        del self.operation_history[:-self.performance.undo_steps]
         self._update_undo_button()
 
     def _update_undo_button(self):
@@ -2653,11 +2657,41 @@ class ModernExplorer(QMainWindow):
         else:
             self.navigate_to(path)
 
-    def show_settings(self):
-        """Show settings dialog."""
+    def show_settings(self, page=None):
+        """Show the settings dialog, optionally on a page ("Appearance" or "Performance")."""
         if not self.settings_dialog:
-            self.settings_dialog = SettingsDialog(self.theme_manager, self)
+            self.settings_dialog = SettingsDialog(self.theme_manager, self.performance, self)
+            self.settings_dialog.performance_changed.connect(self.apply_performance)
+            self.settings_dialog.clear_thumbnails_requested.connect(self._clear_thumbnails)
+        if page:
+            self.settings_dialog.show_page(page)
         self.settings_dialog.exec()
+
+    def apply_performance(self, performance=None):
+        """Apply (and, when given, save) the performance settings everywhere they matter."""
+        if performance is not None:
+            self.performance = performance
+            performance.save(self.settings)
+        p = self.performance
+        for model in (self.file_model, self.folder_pane.model):
+            model.configure_performance(p)
+        self.file_searcher.threads = p.effective_search_threads()
+        self.file_searcher.content_max_bytes = p.content_max_mb * 1024 * 1024
+        self.file_searcher.search_hidden_folders = p.search_hidden_folders
+        self.group_refresh_timer.setInterval(p.folder_refresh_ms)
+        if p.drive_refresh_s:
+            self.drives_refresh_timer.start(p.drive_refresh_s * 1000)
+        else:
+            self.drives_refresh_timer.stop()
+        self.preview_pane.max_text_chars = p.preview_text_kb * 1024
+        self.preview_pane.max_image_bytes = p.preview_image_mb * 1024 * 1024
+        self.preview_pane.pdfs_enabled = p.preview_pdfs
+        del self.operation_history[:-p.undo_steps]
+        self._update_undo_button()
+
+    def _clear_thumbnails(self):
+        self.file_model.clear_thumbnail_cache()
+        self.status_label.setText("Thumbnail cache cleared")
 
     def set_preview_visible(self, visible):
         """Show or hide the preview panel."""

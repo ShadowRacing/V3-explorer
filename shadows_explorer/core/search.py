@@ -173,6 +173,10 @@ class FileSearcher(QObject):
         self._cancel_event.set()
         self._last_progress = 0.0
         self.cpu_count = os.cpu_count() or 4
+        # Performance settings (see core/performance.py)
+        self.threads = self.cpu_count
+        self.content_max_bytes = 50 * 1024 * 1024
+        self.search_hidden_folders = False
 
     @property
     def is_running(self):
@@ -240,8 +244,8 @@ class FileSearcher(QObject):
         """Coordinate the search: fan top-level folders out to a thread pool."""
         recursive = options.get('include_subfolders', True)
         try:
-            self.status_update.emit(f"Searching with {self.cpu_count} threads...")
-            with ThreadPoolExecutor(max_workers=self.cpu_count) as pool:
+            self.status_update.emit(f"Searching with {self.threads} thread{'s' if self.threads != 1 else ''}...")
+            with ThreadPoolExecutor(max_workers=self.threads) as pool:
                 futures = []
                 for location in locations:
                     if cancel.is_set():
@@ -297,7 +301,7 @@ class FileSearcher(QObject):
                 is_dir = entry.is_dir(follow_symlinks=False)
             except OSError:
                 continue
-            if is_dir and not entry.name.startswith('.'):
+            if is_dir and (self.search_hidden_folders or not entry.name.startswith('.')):
                 subdirs.append(entry.path)
             if query.matches_name(entry.name):
                 self._check_match(entry, is_dir, directory, search_id, query, options)
@@ -323,7 +327,7 @@ class FileSearcher(QObject):
         snippet = ""
         if query.content:
             # Reading the file is the slow part, so it comes after every other check
-            snippet = find_in_file(entry.path, query.content)
+            snippet = find_in_file(entry.path, query.content, self.content_max_bytes)
             if snippet is None:
                 return
         with self.lock:
