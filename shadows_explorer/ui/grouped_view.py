@@ -5,15 +5,13 @@ GroupedFolderView lists a folder's items under collapsible group headers
 ("Today", "Pictures", "Large (128 MB - 1 GB)", ...). The groups themselves are
 computed by grouping.py; this module only displays them.
 """
-from datetime import datetime
-
 from PyQt6.QtWidgets import QAbstractItemView, QTreeView
 from PyQt6.QtGui import QFont, QStandardItem, QStandardItemModel
 from PyQt6.QtCore import QSize, Qt
 
 from shadows_explorer.theme.icons import file_icon_for_path
 from shadows_explorer.ui.search_results_model import PATH_ROLE
-from shadows_explorer.core.utils import format_size
+from shadows_explorer.core.utils import format_size, format_timestamp
 
 HEADERS = ["Name", "Date Modified", "Type", "Size"]
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 2  # Group name on header rows
@@ -67,7 +65,7 @@ class GroupedFolderView(QTreeView):
     def _row(entry):
         name_item = QStandardItem(file_icon_for_path(entry.path, entry.is_dir), entry.name)
         name_item.setData(entry.path, PATH_ROLE)
-        date_item = QStandardItem(datetime.fromtimestamp(entry.mtime).strftime("%Y-%m-%d %H:%M"))
+        date_item = QStandardItem(format_timestamp(entry.mtime))
         type_item = QStandardItem(entry.type_name)
         size_item = QStandardItem("" if entry.is_dir else format_size(entry.size))
         size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

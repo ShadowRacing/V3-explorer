@@ -6,7 +6,6 @@ each set of copies, and moves the copies the user ticks to the Recycle Bin.
 At least one copy of every file always stays: removing all of them is refused.
 """
 import os
-from datetime import datetime
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTreeWidget,
                             QTreeWidgetItem, QSpinBox, QCheckBox, QHeaderView, QMessageBox, QMenu,
@@ -16,7 +15,7 @@ from PyQt6.QtGui import QFont
 
 from shadows_explorer.core.background import BackgroundJob
 from shadows_explorer.core.duplicates import DuplicateScanCancelled, extra_copies, find_duplicates
-from shadows_explorer.core.utils import format_size
+from shadows_explorer.core.utils import format_size, format_timestamp
 from shadows_explorer.theme.icons import file_icon_for_path
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -143,7 +142,7 @@ class DuplicatesDialog(QDialog):
             header.setFlags(Qt.ItemFlag.ItemIsEnabled)
             for path in group.paths:
                 try:
-                    modified = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+                    modified = format_timestamp(os.path.getmtime(path))
                 except OSError:
                     modified = ""
                 item = QTreeWidgetItem([os.path.basename(path), os.path.dirname(path), modified])

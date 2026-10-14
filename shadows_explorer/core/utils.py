@@ -5,8 +5,30 @@ Pure functions (no Qt widgets) so they can be unit tested without a display.
 """
 import os
 import platform
+from datetime import datetime
 
 IS_WINDOWS = platform.system() == "Windows"
+
+
+def to_datetime(timestamp):
+    """A file timestamp as a local datetime, or None if it can't be shown.
+
+    Windows can't convert negative timestamps (files dated before 1970, which
+    some drives and copied files report) or ones far in the future, and raises
+    OSError; other platforms raise OverflowError or ValueError for extremes.
+    """
+    if timestamp is None:
+        return None
+    try:
+        return datetime.fromtimestamp(timestamp)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def format_timestamp(timestamp, fmt="%Y-%m-%d %H:%M"):
+    """A file timestamp as text, or "" if it can't be shown (see to_datetime)."""
+    moment = to_datetime(timestamp)
+    return moment.strftime(fmt) if moment else ""
 
 
 def format_size(size_bytes):
