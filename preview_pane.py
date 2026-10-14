@@ -4,11 +4,20 @@ Preview pane module for Shadows File Explorer.
 This module provides the PreviewPane class which displays a preview
 of the selected file's content.
 """
+import html
 import os
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                             QTextEdit, QFrame, QToolButton, QStyle)
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import Qt, QFileInfo
+from PyQt6.QtCore import Qt, QFileInfo, pyqtSignal
+
+from utils import format_size
+
+TEXT_EXTENSIONS = {'.txt', '.log', '.ini', '.cfg', '.conf', '.toml', '.yaml', '.yml', '.py', '.pyw',
+                   '.js', '.ts', '.html', '.htm', '.css', '.xml', '.json', '.md', '.csv', '.bat',
+                   '.ps1', '.sh', '.c', '.h', '.cpp', '.java', '.rs', '.go', '.sql'}
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.ico', '.svg'}
+MAX_TEXT_CHARS = 10000
 
 
 class PreviewPane(QWidget):
@@ -19,7 +28,12 @@ class PreviewPane(QWidget):
     - Image file preview
     - File metadata display
     - Support for multiple file types
+    
+    Signals:
+        close_requested: Emitted when the user clicks the close button
     """
+    
+    close_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         """Initialize the preview pane.
@@ -43,7 +57,7 @@ class PreviewPane(QWidget):
         self.close_button.setText("×")
         self.close_button.setStyleSheet("font-size: 18px;")
         self.close_button.setToolTip("Close Preview")
-        self.close_button.clicked.connect(self.clear_preview)
+        self.close_button.clicked.connect(self.close_requested.emit)
         header_layout.addWidget(self.close_button)
         
         self.layout.addLayout(header_layout)
@@ -139,14 +153,14 @@ class PreviewPane(QWidget):
             
             # Format size
             size = file_info.size()
-            size_str = self._format_size(size)
+            size_str = format_size(size)
                 
             mod_date = file_info.lastModified().toString("yyyy-MM-dd hh:mm:ss")
             
-            info_text = (f"<b>Type:</b> {file_info.suffix().upper() or 'File'}<br>"
+            info_text = (f"<b>Type:</b> {html.escape(file_info.suffix().upper()) or 'File'}<br>"
                         f"<b>Size:</b> {size_str}<br>"
                         f"<b>Modified:</b> {mod_date}<br>"
-                        f"<b>Path:</b> {file_info.absolutePath()}")
+                        f"<b>Path:</b> {html.escape(file_info.absolutePath())}")
                         
             self.info_label.setText(info_text)
         except Exception as e:
@@ -156,11 +170,11 @@ class PreviewPane(QWidget):
         ext = os.path.splitext(file_path)[1].lower()
         
         # Text files
-        if ext in ['.txt', '.log', '.ini', '.py', '.js', '.html', '.css', '.xml', '.json']:
+        if ext in TEXT_EXTENSIONS:
             self._preview_text_file(file_path)
                 
         # Image files
-        elif ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+        elif ext in IMAGE_EXTENSIONS:
             self._preview_image_file(file_path)
     
     def _preview_text_file(self, file_path):
@@ -171,8 +185,9 @@ class PreviewPane(QWidget):
         """
         try:
             with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                content = f.read(10000)  # Limit to first 10,000 chars
-                if len(content) >= 10000:
+                content = f.read(MAX_TEXT_CHARS + 1)
+                if len(content) > MAX_TEXT_CHARS:
+                    content = content[:MAX_TEXT_CHARS]
                     content += "\n\n[File content truncated...]"
                 self.text_preview.setPlainText(content)
                 self.text_preview.setVisible(True)
@@ -186,41 +201,24 @@ class PreviewPane(QWidget):
         Args:
             file_path: Path to the image file
         """
-        try:
-            pixmap = QPixmap(file_path)
-            
-            # Scale to fit the preview pane
-            preview_size = self.image_preview.size()
-            if pixmap.width() > preview_size.width() or pixmap.height() > preview_size.height():
-                pixmap = pixmap.scaled(preview_size, Qt.AspectRatioMode.KeepAspectRatio, 
-                                       Qt.TransformationMode.SmoothTransformation)
-            
-            self.image_preview.setPixmap(pixmap)
-            self.image_preview.setVisible(True)
-        except Exception as e:
-            self.message_label.setText(f"Error loading image: {str(e)}")
+        pixmap = QPixmap(file_path)
+        if pixmap.isNull():
+            self.message_label.setText("Could not load image")
             self.message_label.setVisible(True)
-    
-    def _format_size(self, size):
-        """Format file size to human-readable string.
+            return
         
-        Args:
-            size: Size in bytes
-            
-        Returns:
-            str: Formatted size string
-        """
-        if size < 1024:
-            return f"{size} bytes"
-        elif size < 1024 * 1024:
-            return f"{size/1024:.1f} KB"
-        elif size < 1024 * 1024 * 1024:
-            return f"{size/(1024*1024):.1f} MB"
-        else:
-            return f"{size/(1024*1024*1024):.1f} GB"
+        # Scale to fit the pane width (the label itself has no size until shown)
+        max_width = max(100, self.width() - 40)
+        max_height = max(100, int(self.height() * 0.6))
+        if pixmap.width() > max_width or pixmap.height() > max_height:
+            pixmap = pixmap.scaled(max_width, max_height, Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+        
+        self.image_preview.setPixmap(pixmap)
+        self.image_preview.setVisible(True)
     
     def clear_preview(self):
-        """Clear the preview pane and hide it."""
+        """Reset the preview pane to its empty state."""
         self.current_file = None
         self.text_preview.clear()
         self.text_preview.setVisible(False)
@@ -229,6 +227,3 @@ class PreviewPane(QWidget):
         self.info_container.setVisible(False)
         self.message_label.setText("Select a file to preview")
         self.message_label.setVisible(True)
-        
-        # Hide the entire preview pane
-        self.setVisible(False)

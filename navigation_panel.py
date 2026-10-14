@@ -7,8 +7,15 @@ shortcuts to common locations and drives.
 import os
 import platform
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                            QLabel, QStyle, QSizePolicy)
-from PyQt6.QtCore import pyqtSignal, Qt, QStorageInfo
+                            QLabel, QStyle)
+from PyQt6.QtCore import pyqtSignal, QStorageInfo
+
+from utils import normalize_path
+
+
+def drive_item_id(path):
+    """Navigation item id for a drive root path."""
+    return f"drive_{os.path.normcase(normalize_path(path))}"
 
 
 class NavigationPanel(QWidget):
@@ -25,6 +32,10 @@ class NavigationPanel(QWidget):
     
     item_clicked = pyqtSignal(str, str)  # id, path
     
+    # Semi-transparent so they work on both light and dark themes
+    ACTIVE_COLOR = "rgba(0, 120, 215, 0.35)"
+    PARENT_ACTIVE_COLOR = "rgba(128, 128, 128, 0.2)"
+    
     def __init__(self, parent=None):
         """Initialize the navigation panel.
         
@@ -39,6 +50,7 @@ class NavigationPanel(QWidget):
         self.active_item = None
         self.items = {}
         self.drive_items = {}
+        self._drive_paths = None
         self.pc_expanded = True  # Start with drives visible
         
         # Add header
@@ -133,34 +145,13 @@ class NavigationPanel(QWidget):
         Args:
             event: Mouse event
         """
-        # Get click position
-        pos = event.pos()
-        
-        # Check if the click was on the arrow (roughly right side of the widget)
-        if pos.x() > self.pc_button_widget.width() - 30:  # Assuming arrow is on the right ~30px area
-            # Toggle expand/collapse only when arrow is clicked
+        # The arrow on the right toggles the drive list; anywhere else navigates
+        if event.pos().x() > self.pc_button_widget.width() - 30:
             self.pc_expanded = not self.pc_expanded
             self.expand_icon.setText("▼" if self.pc_expanded else "►")
             self.drives_container.setVisible(self.pc_expanded)
         else:
-            # Clicking on the main part of This PC should navigate but not collapse
-            self.item_clicked.emit("pc", "pc")
-        
-        # Update active item
-        if self.active_item and self.active_item != "pc":
-            if self.active_item.startswith("drive_"):
-                # Keep drive selected but update PC appearance
-                self.pc_button_widget.setStyleSheet("background-color: #303030;")
-            else:
-                # Clear previous non-drive selection
-                old_item = self.items.get(self.active_item)
-                if old_item and old_item != self.pc_button_widget:
-                    old_item.setProperty("class", "nav-button")
-                    old_item.style().unpolish(old_item)
-                    old_item.style().polish(old_item)
-        
-        self.active_item = "pc"
-        self.pc_button_widget.setStyleSheet("background-color: #303030;")
+            self.on_item_clicked("pc", "pc")
     
     def add_navigation_item(self, item_id, label, path):
         """Add a navigation item to the panel.
@@ -223,13 +214,8 @@ class NavigationPanel(QWidget):
         Args:
             drive_info: QStorageInfo object with drive information
         """
-        path = drive_info.rootPath()
-        
-        # Make sure Windows drive paths end with backslash
-        if platform.system() == "Windows" and len(path) <= 3 and not path.endswith("\\"):
-            path = path + "\\"
-            
-        drive_id = f"drive_{path}"
+        path = normalize_path(drive_info.rootPath())
+        drive_id = drive_item_id(path)
         
         # Create a widget for the drive
         drive_widget = QWidget()
@@ -316,25 +302,52 @@ class NavigationPanel(QWidget):
         return display_name
 
     def refresh_drives(self):
-        """Refresh the drives list."""
-        # Clear existing drives
+        """Refresh the drives list, rebuilding it only when the set of drives changed."""
+        drives = []
+        for drive in QStorageInfo.mountedVolumes():
+            if not drive.isReady():
+                continue
+            # Skip system mounts on macOS/Linux that appear as drives
+            path = drive.rootPath()
+            if platform.system() != "Windows" and (path == "/" or path.startswith(("/boot", "/sys", "/proc", "/dev", "/run", "/snap"))):
+                continue
+            drives.append(drive)
+        
+        paths = [d.rootPath() for d in drives]
+        if paths == self._drive_paths:
+            return
+        self._drive_paths = paths
+        
         for widget in self.drive_items.values():
             self.drives_layout.removeWidget(widget)
             widget.deleteLater()
         self.drive_items.clear()
         
-        # Add all mounted volumes
-        storage_drives = QStorageInfo.mountedVolumes()
-        for drive in storage_drives:
-            if not drive.isReady():
-                continue
-                
-            # Skip system folders on macOS/Linux that appear as drives
-            path = drive.rootPath()
-            if platform.system() != "Windows" and (path == "/" or path.startswith("/boot") or path.startswith("/sys")):
-                continue
-                
+        for drive in drives:
             self.add_drive_item(drive)
+        
+        # Keep the highlight on the active drive after rebuilding
+        if self.active_item and self.active_item.startswith("drive_"):
+            self._highlight(self.active_item)
+    
+    def _widget_for(self, item_id):
+        """Return the widget for a navigation item id, or None."""
+        return self.drive_items.get(item_id) or self.items.get(item_id)
+    
+    def _highlight(self, item_id):
+        """Visually mark item_id as the active item without navigating."""
+        previous = self._widget_for(self.active_item) if self.active_item else None
+        if previous:
+            previous.setStyleSheet("")
+        self.pc_button_widget.setStyleSheet("")
+        
+        self.active_item = item_id
+        widget = self._widget_for(item_id) if item_id else None
+        if widget:
+            widget.setStyleSheet(f"background-color: {self.ACTIVE_COLOR}; border-radius: 4px;")
+        if item_id and item_id.startswith("drive_"):
+            # Also highlight This PC, but less intensely
+            self.pc_button_widget.setStyleSheet(f"background-color: {self.PARENT_ACTIVE_COLOR}; border-radius: 4px;")
     
     def on_item_clicked(self, item_id, path):
         """Handle navigation item click.
@@ -343,37 +356,14 @@ class NavigationPanel(QWidget):
             item_id: ID of the clicked item
             path: Path of the clicked item
         """
-        # Update active item styling
-        if self.active_item:
-            # Clear previous item styling
-            if self.active_item.startswith("drive_"):
-                if self.active_item in self.drive_items:
-                    self.drive_items[self.active_item].setStyleSheet("")
-            elif self.active_item in self.items:
-                self.items[self.active_item].setStyleSheet("")
-        
-        self.active_item = item_id
-        
-        # Apply active styling
-        if item_id.startswith("drive_"):
-            if item_id in self.drive_items:
-                self.drive_items[item_id].setStyleSheet("background-color: #0c2d48;")
-            # Also highlight PC, but less intensely
-            self.pc_button_widget.setStyleSheet("background-color: #303030;")
-        elif item_id in self.items:
-            self.items[item_id].setStyleSheet("background-color: #0c2d48;")
-            
-        # Emit signal for navigation
+        self._highlight(item_id)
         self.item_clicked.emit(item_id, path)
     
     def set_active_item(self, item_id):
-        """Set the active navigation item.
+        """Highlight the item for the current location without emitting item_clicked.
         
         Args:
-            item_id: ID of the item to activate
+            item_id: ID of the item to activate, or None to clear the highlight
         """
-        if item_id in self.items and item_id != self.active_item:
-            self.on_item_clicked(item_id, self.items[item_id].property("path"))
-        elif item_id.startswith("drive_") and item_id in self.drive_items:
-            path = self.drive_items[item_id].property("path")
-            self.on_item_clicked(item_id, path)
+        if item_id != self.active_item:
+            self._highlight(item_id)

@@ -4,7 +4,8 @@ Theme management module for Shadows File Explorer.
 This module provides the ThemeManager class which handles application themes 
 including light, dark, and retro modes.
 """
-from PyQt6.QtCore import pyqtSignal, QObject, QSettings
+from PyQt6.QtCore import pyqtSignal, QObject, QSettings, Qt
+from PyQt6.QtGui import QGuiApplication
 
 
 class ThemeManager(QObject):
@@ -73,8 +74,9 @@ class ThemeManager(QObject):
         Returns:
             str: CSS stylesheet based on system theme
         """
-        # In a real implementation, would detect the system theme
-        # For now, default to dark theme
+        app = QGuiApplication.instance()
+        if app is not None and app.styleHints().colorScheme() == Qt.ColorScheme.Light:
+            return self._get_light_theme()
         return self._get_dark_theme()
     
     def _get_light_theme(self):
