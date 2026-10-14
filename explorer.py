@@ -28,6 +28,8 @@ from icons import FileIconProvider, file_type_icon, ui_icon
 from archive_ops import (ArchiveCancelled, archive_stem, archive_top_level_names, create_zip,
                          extract_archive, extract_destination, is_archive, suggest_zip_path)
 from background import BackgroundJob
+from bulk_rename import execute_renames
+from bulk_rename_dialog import BulkRenameDialog
 from breadcrumb_bar import FixedBreadcrumbBar
 from drive_components import DrivesView
 from preview_pane import PreviewPane
@@ -206,7 +208,8 @@ class ModernExplorer(QMainWindow):
     def _decorate_menu(self, menu):
         """Add icons to a context menu's actions, matched by their text."""
         for action in menu.actions():
-            name = MENU_ICONS.get(action.text())
+            # "Rename 3 Items..." matches on its first word
+            name = MENU_ICONS.get(action.text()) or MENU_ICONS.get(action.text().split(" ")[0])
             if name:
                 action.setIcon(ui_icon(name, self.icon_color))
             if action.menu():
@@ -835,8 +838,7 @@ class ModernExplorer(QMainWindow):
             extract_to_action = menu.addAction("Extract to...")
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
-        rename_action = menu.addAction("Rename")
-        rename_action.setEnabled(single)
+        rename_action = menu.addAction("Rename" if single else f"Rename {len(paths)} Items...")
         menu.addSeparator()
         properties_action = menu.addAction("Properties")
         properties_action.setEnabled(single)
@@ -868,7 +870,10 @@ class ModernExplorer(QMainWindow):
         elif action == delete_action:
             self.delete_selected_files(paths)
         elif action == rename_action:
-            self.rename_selected_file(paths[0])
+            if single:
+                self.rename_selected_file(paths[0])
+            else:
+                self.bulk_rename(paths)
         elif action == properties_action:
             self.show_properties(paths[0])
 
@@ -1206,7 +1211,10 @@ class ModernExplorer(QMainWindow):
         """
         if path is None:
             paths = self.selected_paths()
-            if len(paths) != 1:
+            if len(paths) > 1:
+                self.bulk_rename(paths)
+                return
+            if not paths:
                 return
             path = paths[0]
 
@@ -1235,6 +1243,25 @@ class ModernExplorer(QMainWindow):
         if self.current_view == "search":
             self._remove_missing_search_results()
         self.status_label.setText(f"Renamed to '{new_name}'")
+
+    def bulk_rename(self, paths):
+        """Rename several items at once with a live preview (see BulkRenameDialog)."""
+        dialog = BulkRenameDialog(paths, self)
+        if not dialog.exec():
+            return
+        pairs = dialog.rename_pairs()
+        try:
+            applied = execute_renames(pairs)
+        except OSError as e:
+            QMessageBox.warning(self, "Rename Failed",
+                                f"Nothing was renamed: {e}")
+            return
+        if applied:
+            self.add_operation_to_history("rename", applied)
+        if self.current_view == "search":
+            self._remove_missing_search_results()
+        self.update_status()
+        self.status_label.setText(f"Renamed {len(applied)} items")
 
     def show_properties(self, path):
         """Show the properties dialog for a file or folder."""
@@ -1514,6 +1541,12 @@ class ModernExplorer(QMainWindow):
                             os.remove(target)
                     except OSError as e:
                         errors.append(f"Could not remove copy '{os.path.basename(target)}': {e}")
+        elif op['type'] == 'rename':
+            # Undo the whole rename at once, so swapped names are restored too
+            try:
+                execute_renames([(target, source) for source, target in op['items']])
+            except OSError as e:
+                errors.append(f"Nothing was renamed back: {e}")
         else:
             for source, target in reversed(op['items']):
                 try:
@@ -1521,10 +1554,8 @@ class ModernExplorer(QMainWindow):
                         errors.append(f"'{os.path.basename(target)}' no longer exists")
                     elif os.path.exists(source) and not paths_equal(source, target):
                         errors.append(f"'{source}' already exists")
-                    elif op['type'] == 'move':
-                        shutil.move(target, source)
                     else:
-                        os.rename(target, source)
+                        shutil.move(target, source)
                 except (OSError, shutil.Error) as e:
                     errors.append(f"'{os.path.basename(target)}': {e}")
 

@@ -14,6 +14,8 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
   (prefix a search with `AllDrives:` to search every drive)
 - Copy, cut, paste, rename and delete, using the system clipboard so it works with other file managers
 - Delete moves items to the Recycle Bin / Trash; undo for copy, move and rename
+- Bulk rename: find/replace (optionally regex), numbered templates like `Holiday {n}`, prefix/suffix
+  and case changes, with a live preview; clashes are blocked and the whole rename undoes in one step
 - Compress to ZIP and extract .zip / .tar archives in the background, with progress, cancel and undo
   ("Extract" uses a new folder so files never spill out; archives can't write outside it)
 - Safety checks before deleting from system folders or opening downloaded or executable files
@@ -39,7 +41,7 @@ python main.py C:\Projects  # or start in a specific folder
 |---|---|
 | Ctrl+C / Ctrl+X / Ctrl+V | Copy / cut / paste |
 | Delete / Shift+Delete | Move to Recycle Bin / delete permanently |
-| F2 | Rename |
+| F2 | Rename (several selected: bulk rename) |
 | Ctrl+Z | Undo copy, move or rename |
 | Alt+Left / Backspace, Alt+Right | Back, forward |
 | Alt+Up | Up one folder |
@@ -61,6 +63,7 @@ python main.py C:\Projects  # or start in a specific folder
 | `explorer.py` | Main window: navigation, file operations, search UI |
 | `navigation_panel.py` | Sidebar, including Favorites |
 | `file_views.py` | Folder views with drag and drop |
+| `bulk_rename.py`, `bulk_rename_dialog.py` | Bulk rename logic and dialog |
 | `archive_ops.py`, `background.py` | Zip/unzip, and running slow jobs off the UI thread |
 | `breadcrumb_bar.py` | Clickable path bar |
 | `drive_components.py` | "This PC" drive overview |
