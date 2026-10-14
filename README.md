@@ -32,7 +32,9 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
 - Safety checks before deleting from system folders or opening downloaded or executable files
 - Preview panel: images (with dimensions), PDFs (first page), rendered Markdown,
   syntax-highlighted code, plain text, and folder summaries
-- Properties dialog with folder size calculation
+- Properties dialog with folder size calculation; optional folder sizes in the details view
+  (Sort → Show folder sizes), measured in the background
+- Analyze Disk Usage (right-click a folder): a size-sorted tree with share bars and the largest files
 - Light, dark, retro (Windows 98) and system themes with a matching icon set;
   window size, view mode and preview state are remembered
 
@@ -87,6 +89,7 @@ shadows_explorer/
 │   ├── archive.py          Zip/unzip, safe against archives escaping their folder
 │   ├── background.py       Runs slow jobs off the UI thread
 │   ├── bulk_rename.py      Bulk rename rules and safe two-phase renaming
+│   ├── disk_usage.py       Folder sizes and disk usage scans
 │   ├── file_types.py       File extension → category (image, code, pdf, ...)
 │   ├── grouping.py         Sorting and grouping rules
 │   ├── open_with.py        Open-with commands and remembered programs
@@ -105,7 +108,7 @@ shadows_explorer/
 │   ├── preview_pane.py     File preview panel
 │   ├── drives_view.py      "This PC" drive overview
 │   ├── search_results_model.py
-│   └── dialogs/            Properties, settings and bulk rename dialogs
+│   └── dialogs/            Properties, settings, bulk rename and disk usage dialogs
 └── theme/
     ├── theme_manager.py    One stylesheet, a color palette per theme
     └── icons.py            The app's own SVG icon set

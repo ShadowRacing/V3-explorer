@@ -4,46 +4,14 @@ Properties dialog module for Shadows File Explorer.
 This module provides the PropertiesDialog class which shows details about a
 file or folder. Folder sizes are calculated in a background thread.
 """
-import os
 import threading
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel, QPushButton,
                             QHBoxLayout, QStyle, QFileIconProvider)
 from PyQt6.QtCore import Qt, QFileInfo, pyqtSignal
 
+from shadows_explorer.core.disk_usage import folder_size
 from shadows_explorer.core.utils import format_size
-
-
-def folder_size(path, cancel_event=None):
-    """Total size and file/folder counts of a directory tree.
-
-    Args:
-        path: Directory to measure
-        cancel_event: Optional threading.Event that aborts the walk
-
-    Returns:
-        tuple: (total_bytes, file_count, folder_count)
-    """
-    total = files = folders = 0
-    stack = [path]
-    while stack:
-        if cancel_event is not None and cancel_event.is_set():
-            break
-        try:
-            with os.scandir(stack.pop()) as entries:
-                for entry in entries:
-                    try:
-                        if entry.is_dir(follow_symlinks=False):
-                            folders += 1
-                            stack.append(entry.path)
-                        else:
-                            files += 1
-                            total += entry.stat(follow_symlinks=False).st_size
-                    except OSError:
-                        continue
-        except OSError:
-            continue
-    return total, files, folders
 
 
 class PropertiesDialog(QDialog):
