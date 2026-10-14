@@ -14,10 +14,11 @@ import html
 import os
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                            QTextEdit, QFrame, QToolButton, QFileIconProvider)
+                            QTextEdit, QToolButton)
 from PyQt6.QtGui import QPixmap, QImageReader, QFont, QFontDatabase
 from PyQt6.QtCore import Qt, QFileInfo, QSize, pyqtSignal
 
+from icons import FileIconProvider, ui_icon
 from utils import format_size
 
 try:
@@ -95,7 +96,9 @@ class PreviewPane(QWidget):
         super().__init__(parent)
         self.dark = True
         self.current_file = None
-        self.icon_provider = QFileIconProvider()
+        self.icon_provider = FileIconProvider()
+        # Needed for the themed background and border on a QWidget subclass
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(16, 16, 16, 16)
@@ -103,29 +106,23 @@ class PreviewPane(QWidget):
         # Header
         header_layout = QHBoxLayout()
         self.title_label = QLabel("Preview")
-        self.title_label.setStyleSheet("font-weight: bold; font-size: 16px;")
+        self.title_label.setObjectName("preview_title")
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
 
         self.close_button = QToolButton()
-        self.close_button.setText("×")
-        self.close_button.setStyleSheet("font-size: 18px;")
+        self.close_button.setIcon(ui_icon("close", "#9aa1ab"))
         self.close_button.setToolTip("Close Preview")
         self.close_button.clicked.connect(self.close_requested.emit)
         header_layout.addWidget(self.close_button)
 
         self.layout.addLayout(header_layout)
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("background-color: rgba(0, 0, 0, 0.1);")
-        self.layout.addWidget(divider)
-
         # Message shown when there is nothing to preview
         self.message_label = QLabel("Select a file to preview")
         self.message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message_label.setWordWrap(True)
-        self.message_label.setStyleSheet("color: #888888; font-size: 14px; padding: 20px;")
+        self.message_label.setObjectName("preview_message")
         self.layout.addWidget(self.message_label)
 
         # Text, code and Markdown preview
@@ -150,7 +147,7 @@ class PreviewPane(QWidget):
         self.file_icon = QLabel()
         icon_layout.addWidget(self.file_icon)
         self.file_name = QLabel()
-        self.file_name.setStyleSheet("font-weight: bold; font-size: 16px;")
+        self.file_name.setObjectName("preview_name")
         self.file_name.setWordWrap(True)
         icon_layout.addWidget(self.file_name, 1)
         info_layout.addLayout(icon_layout)
@@ -163,6 +160,9 @@ class PreviewPane(QWidget):
 
         self.layout.addWidget(self.info_container)
         self.layout.addStretch()
+
+    def set_icon_color(self, color):
+        self.close_button.setIcon(ui_icon("close", color))
 
     def set_dark(self, dark):
         """Pick syntax highlighting colors for a dark or light theme."""
@@ -184,7 +184,7 @@ class PreviewPane(QWidget):
 
     def _show_info(self, file_info, rows):
         """Show the icon, name and a list of (label, value) details."""
-        self.file_icon.setPixmap(self.icon_provider.icon(file_info).pixmap(32, 32))
+        self.file_icon.setPixmap(self.icon_provider.icon(file_info).pixmap(40, 40))
         self.file_name.setText(file_info.fileName() or file_info.absoluteFilePath())
         self.info_label.setText("<br>".join(f"<b>{label}:</b> {html.escape(str(value))}"
                                             for label, value in rows))

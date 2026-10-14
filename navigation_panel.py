@@ -7,10 +7,11 @@ pinned favorites, shortcuts to common locations, and drives.
 import os
 import platform
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStyle, QMenu
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QMenu
 from PyQt6.QtCore import pyqtSignal, Qt, QStorageInfo, QSettings
 
 from file_views import local_paths_from_mime, should_move
+from icons import ui_icon
 from utils import normalize_path, paths_equal
 
 
@@ -37,18 +38,18 @@ class NavItem(QWidget):
     files_dropped = pyqtSignal(list, str, bool)
     context_menu_requested = pyqtSignal(str, str, object)
 
-    def __init__(self, item_id, label, path, icon, indent=0, parent=None):
+    def __init__(self, item_id, label, path, icon_name, indent=0, parent=None):
         super().__init__(parent)
         self.item_id = item_id
         self.path = path
+        self.icon_name = icon_name
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12 + indent, 4, 8, 4)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10 + indent, 5, 8, 5)
+        layout.setSpacing(10)
 
-        icon_label = QLabel()
-        icon_label.setPixmap(icon.pixmap(16, 16))
-        layout.addWidget(icon_label)
+        self.icon_label = QLabel()
+        layout.addWidget(self.icon_label)
 
         self.text_label = QLabel(label)
         self.text_label.setToolTip(path if os.path.isabs(path) else label)
@@ -61,6 +62,17 @@ class NavItem(QWidget):
         self.setAcceptDrops(os.path.isabs(path))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
+    def set_icon_color(self, color):
+        """Redraw the icon in the theme's icon color."""
+        self.icon_label.setPixmap(ui_icon(self.icon_name, color).pixmap(18, 18))
+
+    def set_flag(self, name, value):
+        """Set a style property (active, parentActive, dropTarget) and restyle."""
+        if self.property(name) != value:
+            self.setProperty(name, value)
+            self.style().unpolish(self)
+            self.style().polish(self)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.item_id, self.path)
@@ -72,16 +84,15 @@ class NavItem(QWidget):
     def dragEnterEvent(self, event):
         if local_paths_from_mime(event.mimeData()) and os.path.isdir(self.path):
             event.acceptProposedAction()
-            self._previous_style = self.styleSheet()
-            self.setStyleSheet(f"background-color: {NavigationPanel.ACTIVE_COLOR}; border-radius: 4px;")
+            self.set_flag("dropTarget", True)
         else:
             event.ignore()
 
     def dragLeaveEvent(self, event):
-        self.setStyleSheet(getattr(self, "_previous_style", ""))
+        self.set_flag("dropTarget", False)
 
     def dropEvent(self, event):
-        self.setStyleSheet(getattr(self, "_previous_style", ""))
+        self.set_flag("dropTarget", False)
         paths = local_paths_from_mime(event.mimeData())
         if not paths:
             event.ignore()
@@ -112,10 +123,6 @@ class NavigationPanel(QWidget):
     files_dropped = pyqtSignal(list, str, bool)
     open_in_new_tab = pyqtSignal(str)
 
-    # Semi-transparent so they work on both light and dark themes
-    ACTIVE_COLOR = "rgba(0, 120, 215, 0.35)"
-    PARENT_ACTIVE_COLOR = "rgba(128, 128, 128, 0.2)"
-    HEADER_STYLE = "font-weight: bold; color: #888888; font-size: 12px; padding-left: 12px;"
 
     def __init__(self, parent=None):
         """Initialize the navigation panel.
@@ -127,7 +134,7 @@ class NavigationPanel(QWidget):
         self.settings = QSettings("ShadowsExplorer", "Preferences")
 
         self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(10, 20, 10, 20)
+        self.layout.setContentsMargins(8, 14, 8, 14)
         self.layout.setSpacing(2)
 
         self.active_item = None
@@ -139,33 +146,34 @@ class NavigationPanel(QWidget):
         self.pc_expanded = True  # Start with drives visible
 
         # Favorites section, hidden while empty
-        self.favorites_header = QLabel("FAVORITES")
-        self.favorites_header.setStyleSheet(self.HEADER_STYLE)
+        self.icon_color = "#c9ced6"
+        self.favorites_header = self._make_header("FAVORITES")
         self.favorites_header.setToolTip("Right-click a folder and choose \"Pin to Favorites\"")
         self.layout.addWidget(self.favorites_header)
         self.favorites_container = QWidget()
+        self.favorites_container.setObjectName("nav_container")
         self.favorites_layout = QVBoxLayout(self.favorites_container)
         self.favorites_layout.setContentsMargins(0, 0, 0, 0)
         self.favorites_layout.setSpacing(2)
         self.layout.addWidget(self.favorites_container)
         self.favorites_spacing = QWidget()
+        self.favorites_spacing.setObjectName("nav_container")
         self.favorites_spacing.setFixedHeight(14)
         self.layout.addWidget(self.favorites_spacing)
 
-        self.header = QLabel("LOCATIONS")
-        self.header.setStyleSheet(self.HEADER_STYLE)
+        self.header = self._make_header("LOCATIONS")
         self.layout.addWidget(self.header)
         self._add_standard_locations()
 
         self.layout.addSpacing(14)
 
-        self.devices_header = QLabel("DEVICES")
-        self.devices_header.setStyleSheet(self.HEADER_STYLE)
+        self.devices_header = self._make_header("DEVICES")
         self.layout.addWidget(self.devices_header)
         self._add_this_pc_section()
 
         # Container for drives beneath "This PC"
         self.drives_container = QWidget()
+        self.drives_container.setObjectName("nav_container")
         self.drives_layout = QVBoxLayout(self.drives_container)
         self.drives_layout.setContentsMargins(0, 0, 0, 0)
         self.drives_layout.setSpacing(2)
@@ -176,12 +184,26 @@ class NavigationPanel(QWidget):
         self.refresh_drives()
         self._load_favorites()
 
-    def _icon(self, pixmap):
-        return self.style().standardIcon(pixmap)
+    def _make_header(self, text):
+        header = QLabel(text)
+        header.setObjectName("nav_header")
+        return header
 
-    def _make_item(self, item_id, label, path, icon, indent=0):
+    def set_icon_color(self, color):
+        """Redraw all sidebar icons in the theme's icon color."""
+        self.icon_color = color
+        for item in self._all_items():
+            item.set_icon_color(color)
+        self.expand_icon.setPixmap(ui_icon("chevron_down" if self.pc_expanded else "chevron_right",
+                                           color).pixmap(14, 14))
+
+    def _all_items(self):
+        return list(self.items.values()) + list(self.drive_items.values()) + list(self.favorite_items.values())
+
+    def _make_item(self, item_id, label, path, icon_name, indent=0):
         """Create a NavItem wired to this panel's signals."""
-        item = NavItem(item_id, label, path, icon, indent)
+        item = NavItem(item_id, label, path, icon_name, indent)
+        item.set_icon_color(self.icon_color)
         item.clicked.connect(self.on_item_clicked)
         item.files_dropped.connect(self.files_dropped.emit)
         item.context_menu_requested.connect(self._show_item_menu)
@@ -191,38 +213,39 @@ class NavigationPanel(QWidget):
         """Add standard locations like Home, Desktop, etc."""
         home = os.path.expanduser("~")
         locations = [
-            ("home", "Home", home, QStyle.StandardPixmap.SP_DirHomeIcon),
-            ("desktop", "Desktop", os.path.join(home, "Desktop"), QStyle.StandardPixmap.SP_DesktopIcon),
-            ("documents", "Documents", os.path.join(home, "Documents"), QStyle.StandardPixmap.SP_DirIcon),
-            ("downloads", "Downloads", os.path.join(home, "Downloads"), QStyle.StandardPixmap.SP_DirIcon),
-            ("pictures", "Pictures", os.path.join(home, "Pictures"), QStyle.StandardPixmap.SP_DirIcon),
-            ("music", "Music", os.path.join(home, "Music"), QStyle.StandardPixmap.SP_DirIcon),
+            ("home", "Home", home),
+            ("desktop", "Desktop", os.path.join(home, "Desktop")),
+            ("documents", "Documents", os.path.join(home, "Documents")),
+            ("downloads", "Downloads", os.path.join(home, "Downloads")),
+            ("pictures", "Pictures", os.path.join(home, "Pictures")),
+            ("music", "Music", os.path.join(home, "Music")),
         ]
-        for item_id, label, path, pixmap in locations:
-            self.add_navigation_item(item_id, label, path, self._icon(pixmap))
+        for item_id, label, path in locations:
+            self.add_navigation_item(item_id, label, path, item_id)
 
     def standard_locations(self):
         """Map of standard location item ids to their paths."""
         return {item_id: item.path for item_id, item in self.items.items() if item_id != "pc"}
 
-    def add_navigation_item(self, item_id, label, path, icon=None):
+    def add_navigation_item(self, item_id, label, path, icon_name="folder"):
         """Add a navigation item to the panel.
 
         Args:
             item_id: Unique identifier for the item
             label: Display label for the item
             path: File path for the item
-            icon: Optional QIcon; defaults to a folder icon
+            icon_name: Name of an icon in icons.UI_ICONS
         """
-        item = self._make_item(item_id, label, path, icon or self._icon(QStyle.StandardPixmap.SP_DirIcon))
+        item = self._make_item(item_id, label, path, icon_name)
         self.layout.addWidget(item)
         self.items[item_id] = item
 
     def _add_this_pc_section(self):
         """Add the 'This PC' item with an arrow that expands/collapses the drive list."""
-        self.pc_button_widget = self._make_item("pc", "This PC", "pc",
-                                                self._icon(QStyle.StandardPixmap.SP_ComputerIcon))
-        self.expand_icon = QLabel("▼")
+        self.pc_button_widget = self._make_item("pc", "This PC", "pc", "pc")
+        self.expand_icon = QLabel()
+        self.expand_icon.setStyleSheet("background: transparent;")
+        self.expand_icon.setPixmap(ui_icon("chevron_down", self.icon_color).pixmap(14, 14))
         self.expand_icon.setToolTip("Show or hide drives")
         self.expand_icon.mousePressEvent = lambda event: self.toggle_drives()
         self.pc_button_widget.layout().addWidget(self.expand_icon)
@@ -232,7 +255,8 @@ class NavigationPanel(QWidget):
     def toggle_drives(self):
         """Expand or collapse the drive list under This PC."""
         self.pc_expanded = not self.pc_expanded
-        self.expand_icon.setText("▼" if self.pc_expanded else "►")
+        self.expand_icon.setPixmap(ui_icon("chevron_down" if self.pc_expanded else "chevron_right",
+                                           self.icon_color).pixmap(14, 14))
         self.drives_container.setVisible(self.pc_expanded)
 
     def add_drive_item(self, drive_info):
@@ -244,7 +268,7 @@ class NavigationPanel(QWidget):
         path = normalize_path(drive_info.rootPath())
         drive_id = drive_item_id(path)
         item = self._make_item(drive_id, self._get_drive_display_name(path, drive_info), path,
-                               self._icon(QStyle.StandardPixmap.SP_DriveHDIcon), indent=16)
+                               "drive", indent=16)
         self.drives_layout.addWidget(item)
         self.drive_items[drive_id] = item
 
@@ -315,7 +339,7 @@ class NavigationPanel(QWidget):
         for path in self.favorites:
             item_id = favorite_item_id(path)
             label = os.path.basename(os.path.normpath(path)) or path
-            item = self._make_item(item_id, label, path, self._icon(QStyle.StandardPixmap.SP_DirLinkIcon))
+            item = self._make_item(item_id, label, path, "star")
             if not os.path.isdir(path):
                 item.text_label.setStyleSheet("color: #888888; text-decoration: line-through;")
                 item.text_label.setToolTip(f"{path} (not available)")
@@ -387,16 +411,14 @@ class NavigationPanel(QWidget):
         """Visually mark item_id as the active item without navigating."""
         previous = self._widget_for(self.active_item)
         if previous:
-            previous.setStyleSheet("")
-        self.pc_button_widget.setStyleSheet("")
+            previous.set_flag("active", False)
 
         self.active_item = item_id
         widget = self._widget_for(item_id)
         if widget:
-            widget.setStyleSheet(f"background-color: {self.ACTIVE_COLOR}; border-radius: 4px;")
-        if item_id and item_id.startswith("drive_"):
-            # Also highlight This PC, but less intensely
-            self.pc_button_widget.setStyleSheet(f"background-color: {self.PARENT_ACTIVE_COLOR}; border-radius: 4px;")
+            widget.set_flag("active", True)
+        # Also highlight This PC, but less intensely, when a drive is active
+        self.pc_button_widget.set_flag("parentActive", bool(item_id and item_id.startswith("drive_")))
 
     def on_item_clicked(self, item_id, path):
         """Handle navigation item click.

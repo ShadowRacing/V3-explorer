@@ -18,7 +18,8 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
 - Preview panel: images (with dimensions), PDFs (first page), rendered Markdown,
   syntax-highlighted code, plain text, and folder summaries
 - Properties dialog with folder size calculation
-- Light, dark, retro and system themes; window size, view mode and preview state are remembered
+- Light, dark, retro (Windows 98) and system themes with a matching icon set;
+  window size, view mode and preview state are remembered
 
 ## Getting started
 
@@ -65,7 +66,8 @@ python main.py C:\Projects  # or start in a specific folder
 | `preview_pane.py` | File preview panel |
 | `properties_dialog.py` | Properties dialog |
 | `file_operation_safety_manager.py` | Protected folders, open/delete safety checks, Recycle Bin |
-| `theme_manager.py`, `settings_dialog.py` | Themes and settings |
+| `theme_manager.py`, `settings_dialog.py` | Themes (one stylesheet, a color palette per theme) and settings |
+| `icons.py` | The app's own SVG icon set, recolored per theme |
 | `utils.py` | Shared helpers (no Qt widgets), covered by unit tests |
 
 ## Development
