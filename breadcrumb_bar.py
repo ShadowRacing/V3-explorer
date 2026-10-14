@@ -130,6 +130,9 @@ class FixedBreadcrumbBar(QWidget):
         if text.lower() in ("this pc", "pc"):
             self.path_changed.emit("pc")
             return
+        if text.lower() == "recent":
+            self.path_changed.emit("recent")
+            return
         path = os.path.expandvars(os.path.expanduser(text))
         if os.path.isfile(path):
             path = os.path.dirname(path)
@@ -251,6 +254,8 @@ class FixedBreadcrumbBar(QWidget):
         # Handle special paths
         if path == "This PC":
             return [("This PC", "pc")]
+        if path == "Recent":
+            return [("Recent", "recent")]
             
         # Handle root directory specially
         if os.path.ismount(path):

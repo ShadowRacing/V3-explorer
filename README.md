@@ -15,6 +15,8 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
 - Breadcrumb path bar (click an empty spot or press Ctrl+L to type a path, with folder completion)
   and browser-style back / forward / up navigation
 - Rename in place with F2 or by clicking a selected item; only the name is selected, not the extension
+- Live filter (Ctrl+E): instantly show only the items in the current folder whose names match
+- Recent page in the sidebar: folders you visited and files you opened, newest first
 - Multi-threaded search with filters for date, size and file type
   (prefix a search with `AllDrives:` to search every drive)
 - Copy, cut, paste, rename and delete, using the system clipboard so it works with other file managers
@@ -55,6 +57,7 @@ python main.py C:\Projects  # or start in a specific folder
 | Alt+Up | Up one folder |
 | F5 | Refresh |
 | Ctrl+F / Esc | Search / clear search |
+| Ctrl+E | Filter the current folder (Esc clears it) |
 | Ctrl+Shift+N | New folder |
 | Ctrl+H | Show or hide hidden files |
 | Alt+Enter | Properties |
@@ -74,6 +77,7 @@ python main.py C:\Projects  # or start in a specific folder
 | `file_views.py` | Folder views with drag and drop |
 | `dual_pane.py` | The second folder pane |
 | `grouping.py`, `grouped_view.py` | Sorting/grouping rules and the grouped list |
+| `recent.py` | Recent files and folders, and the filter pattern |
 | `thumbnails.py` | Background picture thumbnails for the icon view |
 | `bulk_rename.py`, `bulk_rename_dialog.py` | Bulk rename logic and dialog |
 | `archive_ops.py`, `background.py` | Zip/unzip, and running slow jobs off the UI thread |

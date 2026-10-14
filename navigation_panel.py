@@ -213,6 +213,7 @@ class NavigationPanel(QWidget):
         """Add standard locations like Home, Desktop, etc."""
         home = os.path.expanduser("~")
         locations = [
+            ("recent", "Recent", "recent"),
             ("home", "Home", home),
             ("desktop", "Desktop", os.path.join(home, "Desktop")),
             ("documents", "Documents", os.path.join(home, "Documents")),
@@ -381,7 +382,7 @@ class NavigationPanel(QWidget):
 
     def _show_item_menu(self, item_id, path, global_pos):
         """Right-click menu for a sidebar item."""
-        if item_id == "pc":
+        if item_id in ("pc", "recent"):
             return
         menu = QMenu(self)
         menu.addAction("Open", lambda: self.on_item_clicked(item_id, path))

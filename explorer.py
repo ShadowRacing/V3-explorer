@@ -4,6 +4,7 @@ Explorer module for Shadows File Explorer.
 This module provides the ModernExplorer class which is the main window
 for the Shadows File Explorer application.
 """
+import fnmatch
 import os
 import shutil
 import struct
@@ -34,6 +35,8 @@ from dual_pane import FolderPane
 from thumbnails import ThumbnailFileSystemModel
 from grouping import GROUP_MODES, SORT_KEYS, group_entries, list_entries, sort_entries
 from grouped_view import GroupedFolderView
+from grouping import Entry
+from recent import RecentItems, filter_pattern
 from breadcrumb_bar import FixedBreadcrumbBar
 from drive_components import DrivesView
 from preview_pane import PreviewPane
@@ -61,6 +64,9 @@ SORT_COLUMNS = {"name": 0, "size": 1, "type": 2, "date": 3}
 SORT_LABELS = {"name": "Name", "date": "Date modified", "size": "Size", "type": "Type"}
 GROUP_LABELS = {"none": "(None)", "type": "Type", "date": "Date modified", "size": "Size"}
 
+# Locations that are pages rather than folders: id -> title
+SPECIAL_LOCATIONS = {"pc": "This PC", "recent": "Recent"}
+
 # Context menu entries that get an icon (see _decorate_menu)
 MENU_ICONS = {
     "Open in New Tab": "tab", "Open in New Window": "window", "Open File Location": "folder",
@@ -72,6 +78,7 @@ MENU_ICONS = {
     "Icons": "view_icons", "List": "view_list", "Details": "view_details", "Hidden files": "hidden",
     "Compress to ZIP": "archive", "Extract": "extract", "Extract to...": "extract",
     "Copy to Other Pane": "copy_to", "Move to Other Pane": "copy_to", "New Folder": "folder",
+    "Remove from Recent": "close", "Clear Recent Items": "delete",
 }
 
 
@@ -126,6 +133,8 @@ class ModernExplorer(QMainWindow):
         self._folder_status = ""
         self.show_hidden = False
         self.sort_key, self.sort_descending, self.group_mode = "name", False, "none"
+        self.filter_pattern = ""
+        self.recent = RecentItems(self.settings)
 
         # Models
         self.file_model = self._create_file_model()
@@ -181,12 +190,14 @@ class ModernExplorer(QMainWindow):
         # Keep a reference: the model does not take ownership of the provider
         self.icon_provider = FileIconProvider()
         model.setIconProvider(self.icon_provider)
+        model.setNameFilterDisables(False)  # The live filter hides non-matching items
         model.setRootPath("")
         return model
 
     def _set_show_hidden(self, show):
         """Show or hide hidden and system files."""
-        filters = QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot | QDir.Filter.AllDirs
+        # No AllDirs: folders must pass the live filter's name filter too
+        filters = QDir.Filter.AllEntries | QDir.Filter.NoDotAndDotDot
         if show:
             filters |= QDir.Filter.Hidden | QDir.Filter.System
         self.file_model.setFilter(filters)
@@ -482,6 +493,18 @@ class ModernExplorer(QMainWindow):
         self.group_button = self._menu_button("group", "Group", "Group items (shown as a list)")
         self.group_button.menu().aboutToShow.connect(self._fill_group_menu)
         view_layout.addWidget(self.group_button)
+        view_layout.addSpacing(8)
+
+        self.filter_box = QLineEdit()
+        self.filter_box.setPlaceholderText("Filter this folder  (Ctrl+E)")
+        self.filter_box.setToolTip("Show only items whose name contains this text (* and ? work as wildcards)")
+        self.filter_box.setClearButtonEnabled(True)
+        self.filter_box.setFixedWidth(220)
+        filter_action = self.filter_box.addAction(ui_icon("filter", self.icon_color),
+                                                  QLineEdit.ActionPosition.LeadingPosition)
+        self.themed_icons.append((filter_action, "filter"))
+        self.filter_box.textChanged.connect(self.apply_filter)
+        view_layout.addWidget(self.filter_box)
 
         view_layout.addStretch()
 
@@ -533,7 +556,7 @@ class ModernExplorer(QMainWindow):
         self.grouped_view = GroupedFolderView()
         self.grouped_view.activated.connect(self._grouped_activated)
         self.grouped_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.grouped_view.customContextMenuRequested.connect(self.show_context_menu)
+        self.grouped_view.customContextMenuRequested.connect(self._grouped_context_menu)
         self.grouped_view.selectionModel().selectionChanged.connect(self.on_file_selection_changed)
         self.group_watcher = QFileSystemWatcher(self)
         self.group_refresh_timer = QTimer(self)
@@ -675,6 +698,7 @@ class ModernExplorer(QMainWindow):
             ("Ctrl+Shift+N", self.create_new_folder),
             ("Ctrl+H", lambda: self.hidden_files_checkbox.toggle()),
             ("Escape", self._escape),
+            ("Ctrl+E", self._focus_filter),
             ("Ctrl+L", self.edit_path),
             ("Alt+D", self.edit_path),
             ("Ctrl+T", lambda: self.new_tab()),
@@ -778,7 +802,7 @@ class ModernExplorer(QMainWindow):
             return self.folder_pane.selected_paths()
         if self.current_view == "search":
             return self.get_selected_search_paths()
-        if self.current_view == "files":
+        if self.current_view in ("files", "recent"):
             return self.get_selected_file_paths()
         return []
 
@@ -807,7 +831,9 @@ class ModernExplorer(QMainWindow):
                 return
 
         # QDesktopServices passes the path as an argument, never through a shell
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(path)):
+            self.recent.add_file(path)
+        else:
             QMessageBox.warning(self, "Error", f"Could not open file:\n{path}")
 
     def open_in_new_window(self, path):
@@ -876,9 +902,9 @@ class ModernExplorer(QMainWindow):
         elif action == properties_action:
             self.show_properties(paths[0])
 
-    def show_context_menu(self, position):
+    def show_context_menu(self, position, view=None):
         """Context menu for the folder views."""
-        view = self.sender()
+        view = view or self.sender()
         index = view.indexAt(position)
         if not index.isValid():
             view.clearSelection()
@@ -1385,11 +1411,14 @@ class ModernExplorer(QMainWindow):
         bar.start_editing()
 
     def _escape(self):
-        """Esc: stop typing a path, otherwise clear the search."""
+        """Esc: stop typing a path, else clear the filter, else clear the search."""
         for bar in (self.breadcrumb_bar, self.folder_pane.breadcrumb_bar):
             if bar.is_editing():
                 bar.stop_editing()
                 return
+        if self.filter_box.text():
+            self.filter_box.clear()
+            return
         self.clear_search()
 
     def bulk_rename(self, paths):
@@ -1434,6 +1463,8 @@ class ModernExplorer(QMainWindow):
                 for entry in entries:
                     if not self.show_hidden and entry.name.startswith("."):
                         continue
+                    if not self._matches_filter(entry.name):
+                        continue
                     try:
                         if entry.is_dir():
                             dir_count += 1
@@ -1443,6 +1474,8 @@ class ModernExplorer(QMainWindow):
                     except OSError:
                         continue
             self._folder_status = f"{file_count} files, {dir_count} folders | {format_size(total_size)}"
+            if self.filter_pattern:
+                self._folder_status += " (filtered)"
         except OSError as e:
             self._folder_status = f"Error reading directory: {e}"
         self._update_selection_status()
@@ -1772,6 +1805,7 @@ class ModernExplorer(QMainWindow):
         except OSError as e:
             self.status_label.setText(f"Error reading directory: {e}")
             entries = []
+        entries = [e for e in entries if self._matches_filter(e.name)]
         groups = group_entries(sort_entries(entries, self.sort_key, self.sort_descending), self.group_mode)
         self.grouped_view.populate(groups)
         watched = self.group_watcher.directories()
@@ -1900,7 +1934,8 @@ class ModernExplorer(QMainWindow):
         locations = []
         if self.restore_tabs:
             saved = self.settings.value("tabs", [], type=list)
-            locations = [loc for loc in saved if loc == "pc" or (isinstance(loc, str) and os.path.isdir(loc))]
+            locations = [loc for loc in saved
+                         if loc in SPECIAL_LOCATIONS or (isinstance(loc, str) and os.path.isdir(loc))]
         if not locations:
             locations = [self.current_path]
         for location in locations:
@@ -1921,19 +1956,19 @@ class ModernExplorer(QMainWindow):
             position: Tab index; defaults to just after the current tab, like a browser
         """
         if location is None:
-            location = "pc" if self.current_view == "drives" else self.current_path
-        elif location != "pc":
+            location = {"drives": "pc", "recent": "recent"}.get(self.current_view, self.current_path)
+        elif location not in SPECIAL_LOCATIONS:
             if not os.path.isdir(location):
                 return
             location = normalize_path(location)
         tab = BrowserTab(location)
-        title = "This PC" if location == "pc" else (os.path.basename(os.path.normpath(location)) or location)
+        title = SPECIAL_LOCATIONS.get(location) or os.path.basename(os.path.normpath(location)) or location
         if position is None:
             position = self.tab_bar.currentIndex() + 1
         index = self.tab_bar.insertTab(position, self._location_icon(location), title)
         self.tab_bar.setTabData(index, tab)
         self._add_tab_close_button(index)
-        self.tab_bar.setTabToolTip(index, "This PC" if location == "pc" else location)
+        self.tab_bar.setTabToolTip(index, SPECIAL_LOCATIONS.get(location, location))
         if select:
             self.tab_bar.setCurrentIndex(index)
 
@@ -1962,17 +1997,17 @@ class ModernExplorer(QMainWindow):
             self._exit_search_mode()
         self._go_to_history_entry(self.history.current)
 
-    def _set_tab_title(self, title, tooltip):
+    def _set_tab_title(self, title, location):
         index = self.tab_bar.currentIndex()
         if index >= 0:
             self.tab_bar.setTabText(index, title)
-            self.tab_bar.setTabToolTip(index, tooltip)
-            self.tab_bar.setTabIcon(index, self._location_icon("pc" if tooltip == "This PC" else tooltip))
+            self.tab_bar.setTabToolTip(index, SPECIAL_LOCATIONS.get(location, location))
+            self.tab_bar.setTabIcon(index, self._location_icon(location))
 
     def _location_icon(self, location):
-        """Tab icon: a computer for This PC, otherwise a folder."""
-        if location == "pc":
-            return ui_icon("pc", self.icon_color)
+        """Tab icon: a computer for This PC, a clock for Recent, otherwise a folder."""
+        if location in SPECIAL_LOCATIONS:
+            return ui_icon(location, self.icon_color)
         return file_type_icon("folder")
 
     # -------------------------- Favorites --------------------------
@@ -2010,6 +2045,8 @@ class ModernExplorer(QMainWindow):
         """
         if item_id == "pc":
             self.show_drives_view()
+        elif item_id == "recent":
+            self.show_recent_view()
         elif item_id == "settings":
             self.show_settings()
         else:
@@ -2097,14 +2134,107 @@ class ModernExplorer(QMainWindow):
         self.views_stack.setCurrentWidget(self.drives_view)
 
         self.setWindowTitle("This PC - Shadows File Explorer")
-        self._set_tab_title("This PC", "This PC")
+        self._set_tab_title("This PC", "pc")
         self.breadcrumb_bar.set_path("This PC")
         self.navigation_panel.set_active_item("pc")
         self._update_nav_buttons()
 
         self.drives_view.load_drives()
         self.preview_pane.clear_preview()
+        self.filter_box.setEnabled(False)
         self.status_label.setText(f"{len(self.drives_view.drive_widgets)} drives")
+
+    def show_recent_view(self, add_to_history=True):
+        """Show recently visited folders and opened files."""
+        if self.is_searching:
+            self._exit_search_mode()
+        if add_to_history:
+            self.history.visit("recent")
+
+        self.current_view = "recent"
+        folders = [self._entry_for(path) for path in self.recent.existing_folders()]
+        files = [self._entry_for(path) for path in self.recent.existing_files()]
+        groups = [(name, [e for e in entries if e]) for name, entries in
+                  (("Recent folders", folders), ("Recent files", files))]
+        self.grouped_view.populate([(name, entries) for name, entries in groups if entries])
+        self.views_stack.setCurrentWidget(self.grouped_view)
+
+        self.setWindowTitle("Recent - Shadows File Explorer")
+        self._set_tab_title("Recent", "recent")
+        self.breadcrumb_bar.set_path("Recent")
+        self.navigation_panel.set_active_item("recent")
+        self._update_nav_buttons()
+        self.preview_pane.clear_preview()
+        self.filter_box.setEnabled(False)
+        count = sum(len(entries) for _, entries in groups)
+        self.status_label.setText(f"{count} recent items" if count else
+                                  "Nothing here yet: folders you visit and files you open show up here")
+
+    @staticmethod
+    def _entry_for(path):
+        try:
+            stats = os.stat(path)
+        except OSError:
+            return None
+        is_dir = os.path.isdir(path)
+        return Entry(os.path.basename(os.path.normpath(path)) or path, path, is_dir,
+                     0 if is_dir else stats.st_size, stats.st_mtime)
+
+    def _grouped_context_menu(self, position):
+        """Right-click in the grouped list: the Recent page has its own menu."""
+        if self.current_view == "recent":
+            self.show_recent_context_menu(position)
+        else:
+            self.show_context_menu(position, self.grouped_view)
+
+    def show_recent_context_menu(self, position):
+        view = self.grouped_view
+        if not view.indexAt(position).isValid():
+            view.clearSelection()
+        paths = self.get_selected_file_paths()
+        menu = QMenu(self)
+        if paths:
+            menu.addAction("Open", lambda: self.open_path(paths[0]))
+            menu.addAction("Open File Location", lambda: self.navigate_to(os.path.dirname(paths[0])))
+            if os.path.isdir(paths[0]):
+                menu.addAction("Open in New Tab", lambda: self.new_tab(paths[0]))
+            menu.addSeparator()
+            menu.addAction("Copy", lambda: self.copy_selected_files(paths))
+            menu.addAction("Copy as Path", lambda: QApplication.clipboard().setText("\n".join(paths)))
+            menu.addAction("Remove from Recent", lambda: self._forget_recent(paths))
+            menu.addSeparator()
+            menu.addAction("Properties", lambda: self.show_properties(paths[0])).setEnabled(len(paths) == 1)
+        else:
+            menu.addAction("Clear Recent Items", self._clear_recent)
+        self._decorate_menu(menu)
+        menu.exec(view.viewport().mapToGlobal(position))
+
+    def _forget_recent(self, paths):
+        for path in paths:
+            self.recent.remove(path)
+        self.show_recent_view(add_to_history=False)
+
+    def _clear_recent(self):
+        self.recent.clear()
+        self.show_recent_view(add_to_history=False)
+
+    # -------------------------- Live filter --------------------------
+
+    def _focus_filter(self):
+        if self.filter_box.isEnabled():
+            self.filter_box.setFocus()
+            self.filter_box.selectAll()
+
+    def apply_filter(self, text):
+        """Show only items in the current folder whose names match text."""
+        self.filter_pattern = filter_pattern(text)
+        self.file_model.setNameFilters([self.filter_pattern] if self.filter_pattern else [])
+        if self.group_mode != "none" and self.current_view == "files":
+            self._refresh_grouped()
+        self.update_status()
+
+    def _matches_filter(self, name):
+        return not self.filter_pattern or fnmatch.fnmatchcase(name.lower(), self.filter_pattern.lower())
 
     def on_file_selection_changed(self, selected, deselected):
         """Update the preview and status bar when the folder selection changes."""
@@ -2124,6 +2254,9 @@ class ModernExplorer(QMainWindow):
         if path == "pc":
             self.show_drives_view()
             return
+        if path == "recent":
+            self.show_recent_view()
+            return
         if not path:
             return
 
@@ -2140,6 +2273,10 @@ class ModernExplorer(QMainWindow):
 
     def _show_directory(self, path):
         """Display a folder without touching the history."""
+        if self.filter_box.text() and not paths_equal(path, self.current_path):
+            self.filter_box.clear()  # The filter belongs to one folder, as in Explorer
+        self.filter_box.setEnabled(True)
+        self.recent.add_folder(path)
         self.current_path = path
         self.current_view = "files"
 
@@ -2166,6 +2303,8 @@ class ModernExplorer(QMainWindow):
             self.clear_search()
         if path == "pc":
             self.show_drives_view(add_to_history=False)
+        elif path == "recent":
+            self.show_recent_view(add_to_history=False)
         elif os.path.isdir(path):
             self._show_directory(path)
         else:
@@ -2218,6 +2357,8 @@ class ModernExplorer(QMainWindow):
             self.search_files()
         elif self.current_view == "drives":
             self.drives_view.load_drives()
+        elif self.current_view == "recent":
+            self.show_recent_view(add_to_history=False)
         else:
             self._show_directory(self.current_path)
         if self.folder_pane.isVisible():
