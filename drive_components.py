@@ -9,8 +9,10 @@ import os
 import platform
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QStyle,
                             QProgressBar, QApplication, QScrollArea, 
-                            QGridLayout, QSizePolicy)
+                            QGridLayout)
 from PyQt6.QtCore import pyqtSignal, Qt, QStorageInfo
+
+from utils import format_size
 
 
 class DriveInfo:
@@ -105,14 +107,7 @@ class DriveInfo:
         Returns:
             str: Formatted size string
         """
-        if size_bytes < 1024:
-            return f"{size_bytes} bytes"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes/1024:.1f} KB"
-        elif size_bytes < 1024 * 1024 * 1024:
-            return f"{size_bytes/(1024*1024):.1f} MB"
-        else:
-            return f"{size_bytes/(1024*1024*1024):.2f} GB"
+        return format_size(size_bytes)
             
     @property
     def storage_info(self):
