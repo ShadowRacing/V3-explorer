@@ -7,9 +7,10 @@ the way Windows Explorer does: by type, by date modified ("Today",
 """
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from shadows_explorer.core.file_types import file_kind
+from shadows_explorer.core.utils import to_datetime
 
 SORT_KEYS = ("name", "date", "size", "type")
 GROUP_MODES = ("none", "type", "date", "size", "tag")
@@ -78,7 +79,11 @@ def sort_entries(entries, key="name", descending=False):
 def date_group(mtime, today=None):
     """The date group name for a modification time."""
     today = today or date.today()
-    day = datetime.fromtimestamp(mtime).date()
+    moment = to_datetime(mtime)
+    if moment is None:
+        # A date the system can't show: before 1970 (or the far future) on Windows
+        return "A long time ago" if mtime < 0 else "In the future"
+    day = moment.date()
     if day > today:
         return "In the future"
     if day == today:

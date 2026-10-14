@@ -8,12 +8,11 @@ import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from shadows_explorer.core.query import find_in_file, parse_query
-from shadows_explorer.core.utils import is_within
+from shadows_explorer.core.utils import format_timestamp, is_within, to_datetime
 
 TYPE_EXTENSIONS = {
     'documents': {'.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.rtf', '.md', '.csv'},
@@ -66,7 +65,7 @@ class SearchResult:
 
         self.size = size
         self.mtime = mtime
-        self.last_modified = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M") if mtime else ""
+        self.last_modified = format_timestamp(mtime) if mtime else ""
 
 
 def passes_filters(name, is_dir, size, mtime, options):
@@ -106,7 +105,10 @@ def passes_filters(name, is_dir, size, mtime, options):
     date_filter = options.get('date_filter')
     if date_filter and mtime is not None:
         filter_type, filter_date = date_filter
-        file_date = datetime.fromtimestamp(mtime).date()
+        moment = to_datetime(mtime)
+        if moment is None:
+            return False  # Can't tell when it was modified
+        file_date = moment.date()
         if filter_type == 'before' and file_date > filter_date:
             return False
         if filter_type == 'after' and file_date < filter_date:

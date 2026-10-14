@@ -83,3 +83,44 @@ def test_history_ignores_repeat_visit():
     history.visit("/1")
     history.visit("/1" + os.sep)
     assert history.entries == ["/1"]
+
+
+class _WindowsDatetime:
+    """Stands in for datetime on Windows, which can't convert timestamps before 1970."""
+
+    @staticmethod
+    def fromtimestamp(timestamp):
+        if timestamp < 0:
+            raise OSError(22, "Invalid argument")
+        import datetime as real
+        return real.datetime.fromtimestamp(timestamp)
+
+
+def test_bad_timestamps_never_raise(monkeypatch):
+    import shadows_explorer.core.utils as utils
+    from shadows_explorer.core.grouping import date_group
+    from shadows_explorer.core.search import SearchResult, passes_filters
+    from datetime import date
+
+    monkeypatch.setattr(utils, "datetime", _WindowsDatetime)
+    assert utils.to_datetime(-86400) is None
+    assert utils.format_timestamp(-86400) == ""
+    assert utils.format_timestamp(None) == ""
+    assert utils.format_timestamp(10 ** 20) == ""  # Far future: OverflowError/ValueError
+    assert utils.format_timestamp(0) != ""
+    assert date_group(-86400, date(2024, 5, 1)) == "A long time ago"
+    assert date_group(10 ** 20, date(2024, 5, 1)) == "In the future"
+    assert not passes_filters("f", False, 0, -86400, {"date_filter": ("after", date(2020, 1, 1))})
+    assert SearchResult("f", "/f", "/", size=1, mtime=-86400).last_modified == ""
+
+
+def test_grouped_view_shows_items_with_bad_dates(qapp, monkeypatch):
+    import shadows_explorer.core.utils as utils
+    from shadows_explorer.core.grouping import Entry
+    from shadows_explorer.ui.grouped_view import GroupedFolderView
+
+    monkeypatch.setattr(utils, "datetime", _WindowsDatetime)
+    view = GroupedFolderView()
+    view.populate([("Recent folders", [Entry("old", "/old", True, 0, -86400)])])
+    row = view.group_model.item(0).child(0, 1)
+    assert view.group_model.item(0).child(0).text() == "old" and row.text() == ""
