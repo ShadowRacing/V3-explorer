@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout,
                             QSpinBox, QCheckBox, QApplication, QStackedWidget, QProgressDialog,
                             QTabBar, QScrollArea, QFileDialog)
 from PyQt6.QtCore import Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings
-from PyQt6.QtGui import QFileSystemModel, QDesktopServices, QKeySequence, QShortcut
+from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 
 from theme_manager import ThemeManager
 from file_operation_safety_manager import FileOperationSafetyManager
@@ -31,6 +31,7 @@ from background import BackgroundJob
 from bulk_rename import execute_renames
 from bulk_rename_dialog import BulkRenameDialog
 from dual_pane import FolderPane
+from thumbnails import ThumbnailFileSystemModel
 from breadcrumb_bar import FixedBreadcrumbBar
 from drive_components import DrivesView
 from preview_pane import PreviewPane
@@ -166,7 +167,7 @@ class ModernExplorer(QMainWindow):
         Returns:
             QFileSystemModel: Configured file model
         """
-        model = QFileSystemModel(self)
+        model = ThumbnailFileSystemModel(self)
         # Keep a reference: the model does not take ownership of the provider
         self.icon_provider = FileIconProvider()
         model.setIconProvider(self.icon_provider)
@@ -649,6 +650,8 @@ class ModernExplorer(QMainWindow):
         view_mode = int(self.settings.value("view_mode", VIEW_ICONS))
         if view_mode in (VIEW_ICONS, VIEW_LIST, VIEW_DETAILS):
             self.view_mode_combo.setCurrentIndex(view_mode)
+        # Not covered by currentIndexChanged when the saved mode is the default
+        self.file_model.set_thumbnails_enabled(self.view_mode_combo.currentIndex() == VIEW_ICONS)
 
         show_hidden = self.settings.value("show_hidden", False, type=bool)
         self.hidden_files_checkbox.setChecked(show_hidden)
@@ -662,6 +665,7 @@ class ModernExplorer(QMainWindow):
     def closeEvent(self, event):
         """Stop background work and save preferences on close."""
         self.file_searcher.stop()
+        self.file_model.shutdown()
         for job in list(self._jobs):
             job.cancel.set()
         self.settings.setValue("geometry", self.saveGeometry())
@@ -1863,8 +1867,8 @@ class ModernExplorer(QMainWindow):
         """Configure the QListView for icon or list display."""
         if index == VIEW_ICONS:
             self.file_view.setViewMode(QListView.ViewMode.IconMode)
-            self.file_view.setGridSize(QSize(112, 100))
-            self.file_view.setIconSize(QSize(48, 48))
+            self.file_view.setGridSize(QSize(124, 118))
+            self.file_view.setIconSize(QSize(72, 72))
             self.file_view.setSpacing(6)
             self.file_view.setWordWrap(True)
         else:
@@ -1891,6 +1895,8 @@ class ModernExplorer(QMainWindow):
         """
         if index in (VIEW_ICONS, VIEW_LIST):
             self._apply_list_mode(index)
+        # Picture thumbnails only in the icon view; small type icons elsewhere
+        self.file_model.set_thumbnails_enabled(index == VIEW_ICONS)
         if self.current_view == "files":
             self._show_file_view()
             self._update_selection_status()

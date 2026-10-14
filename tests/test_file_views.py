@@ -41,3 +41,19 @@ def test_list_view_selection_is_found(qapp):
 
     indexes = ModernExplorer._selected_first_column(view)
     assert [index.data() for index in indexes] == ["a", "c"]
+
+
+def test_load_thumbnail(qapp, tmp_path):
+    from PyQt6.QtGui import QColor, QImage
+    from thumbnails import load_thumbnail
+
+    image = QImage(400, 200, QImage.Format.Format_RGB32)
+    image.fill(QColor("red"))
+    path = str(tmp_path / "wide.png")
+    image.save(path)
+    thumb = load_thumbnail(path, 100)
+    assert (thumb.width(), thumb.height()) == (100, 50)  # Aspect ratio kept
+
+    (tmp_path / "broken.png").write_bytes(b"not an image")
+    assert load_thumbnail(str(tmp_path / "broken.png"), 100).isNull()
+    assert load_thumbnail(str(tmp_path / "missing.png"), 100).isNull()

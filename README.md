@@ -5,7 +5,8 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
 ## Features
 
 - Tabs, each with its own back/forward history; open tabs are restored on the next start
-- Icon, list and details views, with an optional hidden-files toggle
+- Icon, list and details views, with an optional hidden-files toggle; the icon view shows picture
+  thumbnails, loaded in the background
 - Sidebar with pinned Favorites, standard folders and drives, plus a "This PC" overview with disk usage
 - Drag and drop between folders, the sidebar and other apps
   (moves within a drive, copies between drives; hold Ctrl to copy, Shift to move)
@@ -67,6 +68,7 @@ python main.py C:\Projects  # or start in a specific folder
 | `navigation_panel.py` | Sidebar, including Favorites |
 | `file_views.py` | Folder views with drag and drop |
 | `dual_pane.py` | The second folder pane |
+| `thumbnails.py` | Background picture thumbnails for the icon view |
 | `bulk_rename.py`, `bulk_rename_dialog.py` | Bulk rename logic and dialog |
 | `archive_ops.py`, `background.py` | Zip/unzip, and running slow jobs off the UI thread |
 | `breadcrumb_bar.py` | Clickable path bar |
