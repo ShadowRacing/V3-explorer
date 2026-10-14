@@ -1,1 +1,3 @@
 PyQt6>=6.5
+# Optional: syntax highlighting in the preview panel
+Pygments>=2.10

@@ -15,13 +15,15 @@ from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout, QStyl
                             QPushButton, QMenu, QMessageBox, QToolButton,
                             QProgressBar, QListView, QTreeView, QComboBox,
                             QInputDialog, QDialog, QTextEdit, QFrame, QDateEdit, QRadioButton, QGroupBox,
-                            QSpinBox, QCheckBox, QApplication, QStackedWidget, QProgressDialog)
+                            QSpinBox, QCheckBox, QApplication, QStackedWidget, QProgressDialog,
+                            QTabBar, QScrollArea)
 from PyQt6.QtCore import Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings
 from PyQt6.QtGui import QFileSystemModel, QDesktopServices, QKeySequence, QShortcut
 
 from theme_manager import ThemeManager
 from file_operation_safety_manager import FileOperationSafetyManager
-from navigation_panel import NavigationPanel, drive_item_id
+from navigation_panel import NavigationPanel
+from file_views import FileListView, FileTreeView
 from breadcrumb_bar import FixedBreadcrumbBar
 from drive_components import DrivesView
 from preview_pane import PreviewPane
@@ -43,6 +45,17 @@ PROGRESS_DIALOG_THRESHOLD = 5  # show a progress dialog above this many items
 MAX_UNDO_HISTORY = 20
 
 VIEW_ICONS, VIEW_LIST, VIEW_DETAILS = range(3)
+
+
+class BrowserTab:
+    """State of one tab: its own back/forward history.
+
+    The tab's current location is history.current (a folder path, or "pc").
+    """
+
+    def __init__(self, location):
+        self.history = NavigationHistory()
+        self.history.visit(location)
 
 
 class ModernExplorer(QMainWindow):
@@ -75,11 +88,12 @@ class ModernExplorer(QMainWindow):
         self.settings_dialog = None
         self.child_windows = []
 
-        # Navigation state
-        self.history = NavigationHistory()
+        # Navigation state (history lives in each tab)
+        self._shown_tab = None
+        self.restore_tabs = start_path is None
         if not (start_path and os.path.isdir(start_path)):
             start_path = self._get_default_start_path()
-        self.current_path = os.path.abspath(start_path)
+        self.current_path = normalize_path(os.path.abspath(start_path))
         self.current_view = "files"  # Options: "files", "drives", "search"
         self._folder_status = ""
         self.show_hidden = False
@@ -109,7 +123,7 @@ class ModernExplorer(QMainWindow):
 
         self.apply_theme(self.theme_manager.current_theme)
 
-        self.navigate_to(self.current_path)
+        self._open_initial_tabs()
 
         # Refresh drives periodically to pick up USB sticks etc.
         self.drives_refresh_timer = QTimer(self)
@@ -152,6 +166,7 @@ class ModernExplorer(QMainWindow):
             theme_name: Name of the theme to apply
         """
         self.setStyleSheet(self.theme_manager.get_theme_stylesheet(theme_name))
+        self.preview_pane.set_dark(self.theme_manager.is_dark(theme_name))
 
     def setup_ui(self):
         """Set up the user interface."""
@@ -163,6 +178,7 @@ class ModernExplorer(QMainWindow):
         self.main_layout.setContentsMargins(0, 0, 0, 0)
 
         self._setup_app_bar()
+        self._setup_tab_bar()
         self._setup_content_area()
         self._setup_action_bar()
 
@@ -271,6 +287,34 @@ class ModernExplorer(QMainWindow):
 
         self.main_layout.addWidget(self.app_bar)
 
+    def _setup_tab_bar(self):
+        """Set up the row of tabs below the app bar."""
+        tab_row = QWidget()
+        tab_row.setObjectName("tab_row")
+        tab_layout = QHBoxLayout(tab_row)
+        tab_layout.setContentsMargins(8, 2, 8, 0)
+        tab_layout.setSpacing(4)
+        
+        self.tab_bar = QTabBar()
+        self.tab_bar.setTabsClosable(True)
+        self.tab_bar.setMovable(True)
+        self.tab_bar.setDocumentMode(True)
+        self.tab_bar.setExpanding(False)
+        self.tab_bar.setElideMode(Qt.TextElideMode.ElideMiddle)
+        self.tab_bar.setUsesScrollButtons(True)
+        self.tab_bar.currentChanged.connect(self._on_tab_changed)
+        self.tab_bar.tabCloseRequested.connect(self.close_tab)
+        tab_layout.addWidget(self.tab_bar)
+        
+        new_tab_button = QToolButton()
+        new_tab_button.setText("+")
+        new_tab_button.setToolTip("New Tab (Ctrl+T)")
+        new_tab_button.clicked.connect(lambda: self.new_tab())
+        tab_layout.addWidget(new_tab_button)
+        tab_layout.addStretch()
+        
+        self.main_layout.addWidget(tab_row)
+    
     def _setup_file_view(self, view):
         """Apply settings shared by the icon/list view and the details view."""
         view.setModel(self.file_model)
@@ -280,6 +324,8 @@ class ModernExplorer(QMainWindow):
         view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         view.customContextMenuRequested.connect(self.show_context_menu)
         view.selectionModel().selectionChanged.connect(self.on_file_selection_changed)
+        view.files_dropped.connect(self.transfer_files)
+        view.open_in_new_tab.connect(self.new_tab)
 
     def _setup_content_area(self):
         """Set up the main content area."""
@@ -297,7 +343,16 @@ class ModernExplorer(QMainWindow):
 
         self.navigation_panel = NavigationPanel()
         self.navigation_panel.item_clicked.connect(self.handle_navigation_item)
-        sidebar_layout.addWidget(self.navigation_panel)
+        self.navigation_panel.files_dropped.connect(self.transfer_files)
+        self.navigation_panel.open_in_new_tab.connect(self.new_tab)
+        
+        # Scrollable, so long favorites and drive lists still fit
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sidebar_scroll.setWidget(self.navigation_panel)
+        sidebar_layout.addWidget(sidebar_scroll)
 
         content_layout.addWidget(self.sidebar)
 
@@ -355,14 +410,14 @@ class ModernExplorer(QMainWindow):
         self.views_stack = QStackedWidget()
 
         # Icon / list view
-        self.file_view = QListView()
+        self.file_view = FileListView()
         self._setup_file_view(self.file_view)
         self.file_view.setResizeMode(QListView.ResizeMode.Adjust)
         self.file_view.setUniformItemSizes(True)
         self._apply_list_mode(VIEW_ICONS)
 
         # Detail view
-        self.detail_view = QTreeView()
+        self.detail_view = FileTreeView()
         self._setup_file_view(self.detail_view)
         self.detail_view.setSortingEnabled(True)
         self.detail_view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
@@ -473,6 +528,11 @@ class ModernExplorer(QMainWindow):
             ("Ctrl+Shift+N", self.create_new_folder),
             ("Ctrl+H", lambda: self.hidden_files_checkbox.toggle()),
             ("Escape", self.clear_search),
+            ("Ctrl+T", lambda: self.new_tab()),
+            ("Ctrl+W", lambda: self.close_tab(self.tab_bar.currentIndex())),
+            ("Ctrl+Tab", lambda: self._cycle_tab(1)),
+            ("Ctrl+Shift+Tab", lambda: self._cycle_tab(-1)),
+            ("Ctrl+D", self.toggle_favorite_current),
         ]
         for key, slot in shortcuts:
             shortcut = QShortcut(QKeySequence(key), self)
@@ -507,6 +567,8 @@ class ModernExplorer(QMainWindow):
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("view_mode", self.view_mode_combo.currentIndex())
         self.settings.setValue("preview_visible", self.preview_pane.isVisible())
+        self.settings.setValue("tabs", [self._tab(i).history.current for i in range(self.tab_bar.count())])
+        self.settings.setValue("current_tab", self.tab_bar.currentIndex())
         super().closeEvent(event)
 
     # -------------------------- Selection helpers --------------------------
@@ -599,6 +661,8 @@ class ModernExplorer(QMainWindow):
         menu = QMenu(self)
         open_action = menu.addAction("Open")
         open_location_action = menu.addAction("Open File Location")
+        new_tab_action = menu.addAction("Open in New Tab")
+        new_tab_action.setEnabled(os.path.isdir(paths[0]))
         menu.addSeparator()
         cut_action = menu.addAction("Cut")
         copy_action = menu.addAction("Copy")
@@ -614,6 +678,8 @@ class ModernExplorer(QMainWindow):
             self.open_path(paths[0])
         elif action == open_location_action:
             self.navigate_to(os.path.dirname(paths[0]))
+        elif action == new_tab_action:
+            self.new_tab(paths[0])
         elif action == copy_action:
             self.copy_selected_files(paths)
         elif action == cut_action:
@@ -653,6 +719,9 @@ class ModernExplorer(QMainWindow):
             paste_action = menu.addAction("Paste", self.paste_files)
             paste_action.setEnabled(bool(self._read_clipboard()[0]))
             menu.addSeparator()
+            pinned = self.navigation_panel.is_favorite(self.current_path)
+            menu.addAction("Unpin This Folder" if pinned else "Pin This Folder to Favorites",
+                           self.toggle_favorite_current)
             menu.addAction("Properties", lambda: self.show_properties(self.current_path))
             menu.exec(view.viewport().mapToGlobal(position))
             return
@@ -660,8 +729,12 @@ class ModernExplorer(QMainWindow):
         single = len(paths) == 1
         open_action = menu.addAction("Open")
         new_window_action = None
+        new_tab_action = pin_action = None
         if single and os.path.isdir(paths[0]):
+            new_tab_action = menu.addAction("Open in New Tab")
             new_window_action = menu.addAction("Open in New Window")
+            pinned = self.navigation_panel.is_favorite(paths[0])
+            pin_action = menu.addAction("Unpin from Favorites" if pinned else "Pin to Favorites")
         menu.addSeparator()
         cut_action = menu.addAction("Cut")
         copy_action = menu.addAction("Copy")
@@ -680,6 +753,10 @@ class ModernExplorer(QMainWindow):
             self.open_path(paths[0])
         elif new_window_action is not None and action == new_window_action:
             self.open_in_new_window(paths[0])
+        elif new_tab_action is not None and action == new_tab_action:
+            self.new_tab(paths[0])
+        elif pin_action is not None and action == pin_action:
+            self.toggle_favorite(paths[0])
         elif action == copy_action:
             self.copy_selected_files(paths)
         elif action == cut_action:
@@ -742,20 +819,24 @@ class ModernExplorer(QMainWindow):
     # -------------------------- File operations --------------------------
 
     def _can_modify_current_folder(self, action):
-        """Check the current folder can be written to, asking about protected folders.
+        """Check the folder being shown can be written to (see _can_modify_folder)."""
+        if self.current_view != "files":
+            QMessageBox.information(self, f"Cannot {action.capitalize()}",
+                                    f"Please navigate to a folder before you {action}.")
+            return False
+        return self._can_modify_folder(self.current_path, action)
+
+    def _can_modify_folder(self, folder, action):
+        """Check a folder can be written to, asking about protected folders.
 
         Args:
+            folder: Folder that will be modified
             action: Verb for messages, e.g. "paste"
 
         Returns:
             bool: True if the operation may go ahead
         """
-        if self.current_view != "files":
-            QMessageBox.information(self, f"Cannot {action.capitalize()}",
-                                    f"Please navigate to a folder before you {action}.")
-            return False
-
-        if self.safety_manager.is_location_protected(self.current_path):
+        if self.safety_manager.is_location_protected(folder):
             confirm = QMessageBox.question(
                 self,
                 "Protected Location",
@@ -766,7 +847,7 @@ class ModernExplorer(QMainWindow):
             if confirm != QMessageBox.StandardButton.Yes:
                 return False
 
-        if self.safety_manager.requires_admin_privileges(self.current_path):
+        if self.safety_manager.requires_admin_privileges(folder):
             QMessageBox.warning(self, "Administrator Rights Required",
                                 "This location requires administrator rights to modify.")
             return False
@@ -925,10 +1006,33 @@ class ModernExplorer(QMainWindow):
         if not self._can_modify_current_folder("paste"):
             return
 
-        destination = self.current_path
+        if self.transfer_files(sources, self.current_path, is_cut, check_folder=False) and is_cut:
+            # A cut can only be pasted once
+            QApplication.clipboard().clear()
+
+    def transfer_files(self, sources, destination, is_cut, check_folder=True):
+        """Copy or move files into a folder (used by paste and drag and drop).
+
+        Args:
+            sources: Paths to copy or move
+            destination: Folder to put them in
+            is_cut: True to move, False to copy
+            check_folder: Run the protected-folder checks on destination
+
+        Returns:
+            bool: True if the operation ran (it may still have had errors)
+        """
+        sources = [p for p in sources if os.path.exists(p)]
+        if not sources or not os.path.isdir(destination):
+            return False
+        if check_folder and not self._can_modify_folder(destination, "move files" if is_cut else "copy files"):
+            return False
+
         plan, errors = self._plan_transfer(sources, destination, is_cut)
         if plan is None:
-            return
+            return False
+        if not plan and not errors:
+            return False
 
         operation = "move" if is_cut else "copy"
         progress = None
@@ -940,6 +1044,7 @@ class ModernExplorer(QMainWindow):
             progress.setMinimumDuration(0)
 
         undo_items = []
+        done = 0
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             for i, (source, target, overwrite) in enumerate(plan):
@@ -951,6 +1056,7 @@ class ModernExplorer(QMainWindow):
                     QApplication.processEvents()
                 try:
                     self._transfer(source, target, is_cut, overwrite)
+                    done += 1
                     if not overwrite:  # Overwritten files can't be restored
                         undo_items.append((source, target))
                 except (OSError, shutil.Error) as e:
@@ -966,12 +1072,10 @@ class ModernExplorer(QMainWindow):
         if errors:
             self._show_errors(f"Errors occurred during {operation}:", errors)
 
-        # A cut can only be pasted once
-        if is_cut:
-            QApplication.clipboard().clear()
-
         self.update_status()
-        self.status_label.setText(f"{operation.capitalize()} completed: {len(plan) - len(errors)} items")
+        self._remove_missing_search_results()
+        self.status_label.setText(f"{operation.capitalize()} completed: {done} items")
+        return True
 
     def _show_errors(self, heading, errors):
         """Show a list of errors in a scrollable dialog."""
@@ -1217,6 +1321,106 @@ class ModernExplorer(QMainWindow):
         self.status_label.setText(f"Undid {op['type']} operation")
         self.update_status()
 
+    # -------------------------- Tabs --------------------------
+
+    @property
+    def history(self):
+        """Back/forward history of the current tab."""
+        return self._tab(self.tab_bar.currentIndex()).history
+
+    def _tab(self, index):
+        return self.tab_bar.tabData(index)
+
+    def _open_initial_tabs(self):
+        """Open the tabs from the last session, or one tab at the start folder."""
+        locations = []
+        if self.restore_tabs:
+            saved = self.settings.value("tabs", [], type=list)
+            locations = [loc for loc in saved if loc == "pc" or (isinstance(loc, str) and os.path.isdir(loc))]
+        if not locations:
+            locations = [self.current_path]
+        for location in locations:
+            self.new_tab(location, select=False, position=self.tab_bar.count())
+        current = int(self.settings.value("current_tab", 0)) if self.restore_tabs else 0
+        current = current if 0 <= current < self.tab_bar.count() else 0
+        if self.tab_bar.currentIndex() == current:
+            self._on_tab_changed(current)
+        else:
+            self.tab_bar.setCurrentIndex(current)
+
+    def new_tab(self, location=None, select=True, position=None):
+        """Open a new tab.
+
+        Args:
+            location: Folder path or "pc"; defaults to the current location
+            select: Switch to the new tab
+            position: Tab index; defaults to just after the current tab, like a browser
+        """
+        if location is None:
+            location = "pc" if self.current_view == "drives" else self.current_path
+        elif location != "pc":
+            if not os.path.isdir(location):
+                return
+            location = normalize_path(location)
+        tab = BrowserTab(location)
+        title = "This PC" if location == "pc" else (os.path.basename(os.path.normpath(location)) or location)
+        if position is None:
+            position = self.tab_bar.currentIndex() + 1
+        index = self.tab_bar.insertTab(position, title)
+        self.tab_bar.setTabData(index, tab)
+        self.tab_bar.setTabToolTip(index, "This PC" if location == "pc" else location)
+        if select:
+            self.tab_bar.setCurrentIndex(index)
+
+    def close_tab(self, index):
+        """Close a tab; closing the last tab closes the window."""
+        if index < 0:
+            return
+        if self.tab_bar.count() == 1:
+            self.close()
+            return
+        self.tab_bar.removeTab(index)
+
+    def _cycle_tab(self, step):
+        count = self.tab_bar.count()
+        if count > 1:
+            self.tab_bar.setCurrentIndex((self.tab_bar.currentIndex() + step) % count)
+
+    def _on_tab_changed(self, index):
+        """Show the location of the newly selected tab."""
+        tab = self._tab(index) if index >= 0 else None
+        # Reordering tabs also changes the index; only react to a real switch
+        if tab is None or tab is self._shown_tab:
+            return
+        self._shown_tab = tab
+        if self.is_searching:
+            self._exit_search_mode()
+        self._go_to_history_entry(self.history.current)
+
+    def _set_tab_title(self, title, tooltip):
+        index = self.tab_bar.currentIndex()
+        if index >= 0:
+            self.tab_bar.setTabText(index, title)
+            self.tab_bar.setTabToolTip(index, tooltip)
+
+    # -------------------------- Favorites --------------------------
+
+    def toggle_favorite(self, path):
+        """Pin a folder to the sidebar Favorites, or unpin it."""
+        if self.navigation_panel.is_favorite(path):
+            self.navigation_panel.remove_favorite(path)
+            self.status_label.setText(f"Unpinned '{os.path.basename(os.path.normpath(path)) or path}'")
+        else:
+            self.navigation_panel.add_favorite(path)
+            self.status_label.setText(f"Pinned '{os.path.basename(os.path.normpath(path)) or path}' to Favorites")
+        if self.current_view == "files":
+            self._update_navigation_selection(self.current_path)
+
+    def toggle_favorite_current(self):
+        """Pin or unpin the folder being shown."""
+        if self.current_view == "files":
+            self.toggle_favorite(self.current_path)
+
     # -------------------------- Navigation --------------------------
 
     def refresh_drives(self):
@@ -1264,7 +1468,7 @@ class ModernExplorer(QMainWindow):
         if not self.preview_pane.isVisible():
             return
         paths = self.selected_paths()
-        if paths and os.path.isfile(paths[0]):
+        if paths and os.path.exists(paths[0]):
             self.preview_pane.preview_file(paths[0])
         else:
             self.preview_pane.clear_preview()
@@ -1283,6 +1487,8 @@ class ModernExplorer(QMainWindow):
             self.file_view.setIconSize(QSize(20, 20))
             self.file_view.setSpacing(2)
             self.file_view.setWordWrap(False)
+        # setViewMode resets this; keep items from being dragged around inside the view
+        self.file_view.setMovement(QListView.Movement.Static)
 
     def _show_file_view(self):
         """Show the folder view that matches the selected view mode."""
@@ -1314,6 +1520,7 @@ class ModernExplorer(QMainWindow):
         self.views_stack.setCurrentWidget(self.drives_view)
 
         self.setWindowTitle("This PC - Shadows File Explorer")
+        self._set_tab_title("This PC", "This PC")
         self.breadcrumb_bar.set_path("This PC")
         self.navigation_panel.set_active_item("pc")
         self._update_nav_buttons()
@@ -1369,6 +1576,7 @@ class ModernExplorer(QMainWindow):
         self.breadcrumb_bar.set_path(path)
         name = os.path.basename(os.path.normpath(path)) or path
         self.setWindowTitle(f"{name} - Shadows File Explorer")
+        self._set_tab_title(name, path)
 
         self._update_nav_buttons()
         self._update_navigation_selection(path)
@@ -1399,26 +1607,7 @@ class ModernExplorer(QMainWindow):
         Args:
             path: Current path
         """
-        home_path = os.path.expanduser("~")
-        standard_locations = {
-            "home": home_path,
-            "desktop": os.path.join(home_path, "Desktop"),
-            "documents": os.path.join(home_path, "Documents"),
-            "downloads": os.path.join(home_path, "Downloads"),
-            "pictures": os.path.join(home_path, "Pictures"),
-            "music": os.path.join(home_path, "Music")
-        }
-        for location_id, location_path in standard_locations.items():
-            if paths_equal(path, location_path):
-                self.navigation_panel.set_active_item(location_id)
-                return
-
-        for drive in QStorageInfo.mountedVolumes():
-            if drive.isReady() and paths_equal(path, drive.rootPath()):
-                self.navigation_panel.set_active_item(drive_item_id(drive.rootPath()))
-                return
-
-        self.navigation_panel.set_active_item(None)
+        self.navigation_panel.set_active_item(self.navigation_panel.item_id_for_path(path))
 
     def navigate_back(self):
         """Navigate to previous location in history."""
@@ -1659,6 +1848,11 @@ class ModernExplorer(QMainWindow):
         if not self.is_searching:
             return
 
+        self._exit_search_mode()
+        self._show_directory(self.current_path)
+
+    def _exit_search_mode(self):
+        """Stop any search and hide the search UI."""
         self.file_searcher.stop()
         self.timer.stop()
         self.is_searching = False
@@ -1666,7 +1860,6 @@ class ModernExplorer(QMainWindow):
         self.search_status_widget.setVisible(False)
         self.clear_search_button.setVisible(False)
         self.search_box.clear()
-        self._show_directory(self.current_path)
 
     def update_search_message(self, message):
         """Show status messages from the searcher in the status bar.
