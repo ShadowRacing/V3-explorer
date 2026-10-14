@@ -14,6 +14,8 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
   (prefix a search with `AllDrives:` to search every drive)
 - Copy, cut, paste, rename and delete, using the system clipboard so it works with other file managers
 - Delete moves items to the Recycle Bin / Trash; undo for copy, move and rename
+- Two panes side by side (Ctrl+Shift+D): each with its own path bar and history; commands apply to
+  the pane you last clicked, plus drag and drop and "Copy/Move to Other Pane"
 - Bulk rename: find/replace (optionally regex), numbered templates like `Holiday {n}`, prefix/suffix
   and case changes, with a live preview; clashes are blocked and the whole rename undoes in one step
 - Compress to ZIP and extract .zip / .tar archives in the background, with progress, cancel and undo
@@ -54,6 +56,7 @@ python main.py C:\Projects  # or start in a specific folder
 | Ctrl+Tab, Ctrl+Shift+Tab | Next / previous tab |
 | Middle-click a folder | Open it in a new tab |
 | Ctrl+D | Pin or unpin the current folder in Favorites |
+| Ctrl+Shift+D | Show or hide the second pane |
 
 ## Project layout
 
@@ -63,6 +66,7 @@ python main.py C:\Projects  # or start in a specific folder
 | `explorer.py` | Main window: navigation, file operations, search UI |
 | `navigation_panel.py` | Sidebar, including Favorites |
 | `file_views.py` | Folder views with drag and drop |
+| `dual_pane.py` | The second folder pane |
 | `bulk_rename.py`, `bulk_rename_dialog.py` | Bulk rename logic and dialog |
 | `archive_ops.py`, `background.py` | Zip/unzip, and running slow jobs off the UI thread |
 | `breadcrumb_bar.py` | Clickable path bar |
