@@ -22,14 +22,14 @@ THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif"
 MAX_IMAGE_BYTES = 80 * 1024 * 1024  # Skip enormous files
 
 
-def load_thumbnail(path, size):
+def load_thumbnail(path, size, max_bytes=MAX_IMAGE_BYTES):
     """Decode an image scaled to fit size x size (runs in a worker thread).
 
     Returns:
-        QImage: The thumbnail, or a null QImage if the file can't be read
+        QImage: The thumbnail, or a null QImage if the file can't be read (or is over max_bytes)
     """
     try:
-        if os.path.getsize(path) > MAX_IMAGE_BYTES:
+        if os.path.getsize(path) > max_bytes:
             return QImage()
     except OSError:
         return QImage()
@@ -95,6 +95,11 @@ class ThumbnailFileSystemModel(QFileSystemModel):
         self._loader.loaded.connect(self._on_loaded)
         self.setReadOnly(False)  # Allow renaming in place
         self.tag_store = None  # core.tags.TagStore, for tag dots (set by the window)
+        self.thumbnails_allowed = True  # Performance setting; the view mode turns them on and off
+        self.cache_size = self.CACHE_SIZE
+        self.max_image_bytes = MAX_IMAGE_BYTES
+        self._thumbnail_threads = 2
+        self._size_threads = 1
         self.show_extensions = True
 
         # Folder sizes for the Size column (optional; a full walk per folder)
@@ -104,6 +109,35 @@ class ThumbnailFileSystemModel(QFileSystemModel):
         self._size_cancel = threading.Event()
         self._size_pool = ThreadPoolExecutor(max_workers=1)
         self._loader.size_loaded.connect(self._on_size_loaded)
+
+    def configure_performance(self, perf):
+        """Apply core.performance.PerformanceSettings: threads, cache size and limits."""
+        allowed_changed = perf.thumbnails != self.thumbnails_allowed
+        self.thumbnails_allowed = perf.thumbnails
+        self.cache_size = perf.thumbnail_cache
+        self.max_image_bytes = perf.thumbnail_max_mb * 1024 * 1024
+        self._failed.clear()  # A higher size limit may allow files that were skipped
+        while len(self._cache) > self.cache_size:
+            self._cache.popitem(last=False)
+        if perf.thumbnail_threads != self._thumbnail_threads:
+            old, self._pool = self._pool, ThreadPoolExecutor(max_workers=perf.thumbnail_threads)
+            old.shutdown(wait=False, cancel_futures=True)
+            self._pending.clear()
+            self._thumbnail_threads = perf.thumbnail_threads
+        if perf.folder_size_threads != self._size_threads:
+            old, self._size_pool = self._size_pool, ThreadPoolExecutor(max_workers=perf.folder_size_threads)
+            old.shutdown(wait=False, cancel_futures=True)
+            self._sizes_pending.clear()
+            self._size_threads = perf.folder_size_threads
+        if allowed_changed and self.thumbnails_enabled:
+            self.layoutChanged.emit()
+
+    def clear_thumbnail_cache(self):
+        """Forget every thumbnail (they are made again when shown)."""
+        self._cache.clear()
+        self._failed.clear()
+        if self.thumbnails_enabled:
+            self.layoutChanged.emit()
 
     def set_thumbnail_size(self, size):
         """Render thumbnails at size pixels (e.g. bigger when zoomed in)."""
@@ -135,7 +169,7 @@ class ThumbnailFileSystemModel(QFileSystemModel):
             tags = self.tag_store.tags_for(self.filePath(index))
             if tags:
                 return f"{self.fileName(index)}\nTags: {', '.join(tags)}"
-        if (self.thumbnails_enabled and role == Qt.ItemDataRole.DecorationRole
+        if (self.thumbnails_enabled and self.thumbnails_allowed and role == Qt.ItemDataRole.DecorationRole
                 and index.isValid() and index.column() == 0):
             thumbnail = self._thumbnail(index)
             if thumbnail is not None:
@@ -232,7 +266,7 @@ class ThumbnailFileSystemModel(QFileSystemModel):
 
     def _load(self, key):
         # Worker thread: only QImage work here
-        self._loader.loaded.emit(key[0], key, load_thumbnail(key[0], self.thumbnail_size))
+        self._loader.loaded.emit(key[0], key, load_thumbnail(key[0], self.thumbnail_size, self.max_image_bytes))
 
     def _on_loaded(self, path, key, image):
         if self._closed:
@@ -242,7 +276,7 @@ class ThumbnailFileSystemModel(QFileSystemModel):
             self._failed.add(key)
             return
         self._cache[key] = framed_icon(image, self.thumbnail_size)
-        while len(self._cache) > self.CACHE_SIZE:
+        while len(self._cache) > self.cache_size:
             self._cache.popitem(last=False)
         index = self.index(path)
         if index.isValid():

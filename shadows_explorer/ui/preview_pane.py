@@ -94,6 +94,10 @@ class PreviewPane(QWidget):
             parent: Parent widget
         """
         super().__init__(parent)
+        # Performance settings (see core/performance.py)
+        self.max_text_chars = MAX_TEXT_CHARS
+        self.max_image_bytes = 50 * 1024 * 1024
+        self.pdfs_enabled = True
         self.dark = True
         self.current_file = None
         self.icon_provider = FileIconProvider()
@@ -269,14 +273,14 @@ class PreviewPane(QWidget):
             self.text_preview.append("\n[File content truncated...]")
 
     def _preview_text(self, file_path):
-        content, truncated = read_text(file_path)
+        content, truncated = read_text(file_path, self.max_text_chars)
         self._set_text_font(monospace=True)
         self.text_preview.setPlainText(content)
         self._show_truncated_note(truncated)
         self.text_preview.setVisible(True)
 
     def _preview_code(self, file_path):
-        content, truncated = read_text(file_path)
+        content, truncated = read_text(file_path, self.max_text_chars)
         self._set_text_font(monospace=True)
         highlighted = highlight_code(content, file_path, self.dark)
         if highlighted:
@@ -287,7 +291,7 @@ class PreviewPane(QWidget):
         self.text_preview.setVisible(True)
 
     def _preview_markdown(self, file_path):
-        content, truncated = read_text(file_path)
+        content, truncated = read_text(file_path, self.max_text_chars)
         self._set_text_font(monospace=False)
         self.text_preview.setMarkdown(content)
         self._show_truncated_note(truncated)
@@ -308,8 +312,17 @@ class PreviewPane(QWidget):
     def _preview_image(self, file_path):
         """Show an image; returns its dimensions as text."""
         reader = QImageReader(file_path)
+        reader.setAutoTransform(True)
         size = reader.size()
-        pixmap = QPixmap(file_path)
+        if os.path.getsize(file_path) > self.max_image_bytes:
+            self._show_message("Too large to preview\n(the limit is set in Settings → Performance)")
+            return f"{size.width()} × {size.height()} pixels" if size.isValid() else "Unknown"
+        limit = self._max_image_size()
+        if size.isValid() and (size.width() > limit.width() or size.height() > limit.height()):
+            # Decode at display size: much faster and lighter than decoding full size, then scaling
+            reader.setScaledSize(size.scaled(limit, Qt.AspectRatioMode.KeepAspectRatio))
+        image = reader.read()
+        pixmap = QPixmap.fromImage(image) if not image.isNull() else QPixmap(file_path)
         if pixmap.isNull():
             self._show_message("Could not load image")
             return "Unknown"
@@ -320,6 +333,9 @@ class PreviewPane(QWidget):
 
     def _preview_pdf(self, file_path):
         """Render the first page of a PDF; returns the page count as text."""
+        if not self.pdfs_enabled:
+            self._show_message("PDF previews are off\n(Settings → Performance)")
+            return "Unknown"
         if QPdfDocument is None:
             self._show_message("PDF preview needs the QtPdf module")
             return "Unknown"
