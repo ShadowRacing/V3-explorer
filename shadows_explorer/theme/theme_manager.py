@@ -154,14 +154,16 @@ QTextEdit {{
     border-radius: {radius}; padding: 6px;
 }}
 QCheckBox, QRadioButton {{ background: transparent; spacing: 6px; }}
-QCheckBox::indicator, QRadioButton::indicator {{
+QCheckBox::indicator, QRadioButton::indicator, QTreeView::indicator, QListView::indicator {{
     width: 14px; height: 14px;
     background-color: {input}; border: 1px solid {muted};
 }}
-QCheckBox::indicator {{ border-radius: 3px; }}
+QCheckBox::indicator, QTreeView::indicator, QListView::indicator {{ border-radius: 3px; }}
 QRadioButton::indicator {{ border-radius: 8px; }}
 QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border: 1px solid {accent}; }}
-QCheckBox::indicator:checked {{ background-color: {accent}; border: 1px solid {accent}; }}
+QCheckBox::indicator:checked, QTreeView::indicator:checked, QListView::indicator:checked {{
+    background-color: {accent}; border: 1px solid {accent};
+}}
 QRadioButton::indicator:checked {{
     background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
         stop:0 {on_accent}, stop:0.35 {on_accent}, stop:0.45 {accent}, stop:1 {accent});
