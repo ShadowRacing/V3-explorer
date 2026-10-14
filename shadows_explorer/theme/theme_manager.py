@@ -11,15 +11,15 @@ import tempfile
 from PyQt6.QtCore import pyqtSignal, QObject, QSettings, Qt
 from PyQt6.QtGui import QGuiApplication
 
-def check_mark_file(color):
-    """Path of an SVG check mark in color, for checked check boxes (a stylesheet needs a file).
+def _svg_file(name, color, path_data, stroke_width):
+    """Write a small stroked SVG icon for the stylesheet (which can only use image files), once per color.
 
-    Written once per color to the temp folder; forward slashes so the stylesheet accepts it on Windows.
+    Returns its path with forward slashes, which stylesheets accept on Windows too ("" if it can't be written).
     """
-    path = os.path.join(tempfile.gettempdir(), f"shadows-explorer-check-{color.lstrip('#')}.svg")
+    path = os.path.join(tempfile.gettempdir(), f"shadows-explorer-{name}-{color.lstrip('#')}.svg")
     if not os.path.exists(path):
-        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7" '
-               f'fill="none" stroke="{color}" stroke-width="2.2" stroke-linecap="round" '
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="{path_data}" '
+               f'fill="none" stroke="{color}" stroke-width="{stroke_width}" stroke-linecap="round" '
                f'stroke-linejoin="round"/></svg>')
         try:
             with open(path, "w", encoding="utf-8") as f:
@@ -29,9 +29,27 @@ def check_mark_file(color):
     return path.replace("\\", "/")
 
 
+def check_mark_file(color):
+    """Path of an SVG check mark in color, for checked check boxes."""
+    return _svg_file("check", color, "M3.5 8.5l3 3 6-7", 2.2)
+
+
+def arrow_file(direction, color):
+    """Path of an SVG chevron ("up" or "down") in color, for spin box and combo box arrows."""
+    return _svg_file(f"arrow-{direction}", color, "M4 10l4-4 4 4" if direction == "up" else "M4 6l4 4 4-4", 1.8)
+
+
 def build_stylesheet(palette):
     """The app stylesheet filled in with a palette's colors."""
-    return STYLESHEET.format(check_image=check_mark_file(palette["on_accent"]), **palette)
+    images = {
+        "check_image": check_mark_file(palette["on_accent"]),
+        "arrow_up_image": arrow_file("up", palette["text"]),
+        "arrow_down_image": arrow_file("down", palette["text"]),
+        # Dimmed when the value is at its limit or the box is disabled
+        "arrow_up_off_image": arrow_file("up", palette["muted"]),
+        "arrow_down_off_image": arrow_file("down", palette["muted"]),
+    }
+    return STYLESHEET.format(**images, **palette)
 
 
 PALETTES = {
@@ -170,7 +188,22 @@ QLineEdit, QSpinBox, QDateEdit, QComboBox {{
     selection-color: {on_accent};
 }}
 QLineEdit:focus, QSpinBox:focus, QDateEdit:focus, QComboBox:focus {{ border: 1px solid {accent}; }}
-QComboBox::drop-down {{ border: none; width: 18px; }}
+QComboBox::drop-down, QDateEdit::drop-down {{ border: none; width: 20px; }}
+QComboBox::down-arrow, QDateEdit::down-arrow {{ image: url("{arrow_down_image}"); width: 10px; height: 10px; }}
+QComboBox::down-arrow:disabled, QDateEdit::down-arrow:disabled {{ image: url("{arrow_down_off_image}"); }}
+/* Spin box buttons: a stacked up/down pair on the right, drawn with our own arrows */
+QSpinBox {{ padding-right: 22px; }}
+QSpinBox::up-button, QSpinBox::down-button {{
+    subcontrol-origin: border; width: 20px; border: none; background: transparent;
+}}
+QSpinBox::up-button {{ subcontrol-position: top right; border-top-right-radius: {radius}; }}
+QSpinBox::down-button {{ subcontrol-position: bottom right; border-bottom-right-radius: {radius}; }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background-color: {hover}; }}
+QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {{ background-color: {pressed}; }}
+QSpinBox::up-arrow {{ image: url("{arrow_up_image}"); width: 10px; height: 10px; }}
+QSpinBox::down-arrow {{ image: url("{arrow_down_image}"); width: 10px; height: 10px; }}
+QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off {{ image: url("{arrow_up_off_image}"); }}
+QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off {{ image: url("{arrow_down_off_image}"); }}
 QComboBox QAbstractItemView {{
     background-color: {raised}; border: 1px solid {border};
     selection-background-color: {selected}; selection-color: {selected_text};
