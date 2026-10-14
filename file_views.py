@@ -7,8 +7,8 @@ moves.
 """
 import os
 
-from PyQt6.QtWidgets import QAbstractItemView, QListView, QTreeView
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QAbstractItemView, QLineEdit, QListView, QStyledItemDelegate, QTreeView
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 
 
 def local_paths_from_mime(mime):
@@ -44,6 +44,21 @@ def should_move(sources, destination, modifiers):
     return all(same_device(source, destination) for source in sources)
 
 
+class RenameDelegate(QStyledItemDelegate):
+    """In-place rename editor that selects the name but not the extension."""
+    
+    def setEditorData(self, editor, index):
+        super().setEditorData(editor, index)
+        if isinstance(editor, QLineEdit):
+            name = editor.text()
+            model = index.model()
+            is_dir = hasattr(model, "isDir") and model.isDir(index)
+            stem = os.path.splitext(name)[0] if not is_dir else name
+            length = len(stem) if stem else len(name)
+            # The view selects all text after this runs, so select on the next tick
+            QTimer.singleShot(0, lambda: editor.setSelection(0, length))
+
+
 class FileDropMixin:
     """Drag and drop behaviour shared by the folder views.
 
@@ -53,6 +68,7 @@ class FileDropMixin:
     """
 
     def _init_drag_drop(self):
+        self.setItemDelegateForColumn(0, RenameDelegate(self))
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)

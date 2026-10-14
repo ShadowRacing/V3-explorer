@@ -10,11 +10,11 @@ import os
 
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QAbstractItemView
 from PyQt6.QtCore import Qt, QSize, QDir, pyqtSignal
-from PyQt6.QtGui import QFileSystemModel
 
 from breadcrumb_bar import FixedBreadcrumbBar
 from file_views import FileTreeView
 from icons import FileIconProvider, ui_icon
+from thumbnails import ThumbnailFileSystemModel
 from utils import NavigationHistory, normalize_path
 
 
@@ -29,6 +29,7 @@ class FolderPane(QWidget):
         selection_changed: The selection changed
         close_requested: The close button was clicked
         location_changed: The pane now shows another folder (path)
+        path_not_found: A typed path is not a folder (path)
     """
 
     open_file = pyqtSignal(str)
@@ -37,6 +38,7 @@ class FolderPane(QWidget):
     selection_changed = pyqtSignal()
     close_requested = pyqtSignal()
     location_changed = pyqtSignal(str)
+    path_not_found = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -64,7 +66,7 @@ class FolderPane(QWidget):
         layout.addLayout(header)
 
         # Own model, so the pane can show a different folder than the main view
-        self.model = QFileSystemModel(self)
+        self.model = ThumbnailFileSystemModel(self)  # Thumbnails stay off; used for in-place rename
         self.icon_provider = FileIconProvider()
         self.model.setIconProvider(self.icon_provider)
         self.model.setRootPath("")
@@ -72,7 +74,7 @@ class FolderPane(QWidget):
         self.view = FileTreeView()
         self.view.setModel(self.model)
         self.view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.view.setEditTriggers(QAbstractItemView.EditTrigger.SelectedClicked)
         self.view.setSortingEnabled(True)
         self.view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
         self.view.setRootIsDecorated(False)
@@ -122,6 +124,7 @@ class FolderPane(QWidget):
             return
         path = normalize_path(path)
         if not os.path.isdir(path):
+            self.path_not_found.emit(path)
             return
         if add_to_history:
             self.history.visit(path)

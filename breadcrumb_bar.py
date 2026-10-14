@@ -6,9 +6,10 @@ as clickable breadcrumb components for easy navigation.
 """
 import os
 import platform
-from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QScrollArea, QPushButton, 
-                            QLabel, QToolButton)
-from PyQt6.QtCore import pyqtSignal, Qt, QTimer
+from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QScrollArea, QPushButton,
+                            QLabel, QToolButton, QLineEdit, QCompleter)
+from PyQt6.QtCore import pyqtSignal, Qt, QTimer, QDir
+from PyQt6.QtGui import QFileSystemModel
 
 
 class FixedBreadcrumbBar(QWidget):
@@ -79,10 +80,67 @@ class FixedBreadcrumbBar(QWidget):
         
         # Tracking last path to prevent resetting scroll on each set_path
         self.last_path = ""
+
+        # Text field for typing or pasting a path, shown instead of the crumbs
+        self.path_edit = QLineEdit()
+        self.path_edit.setStyleSheet("QLineEdit { border: none; background: transparent; padding: 0 4px; }")
+        self.path_edit.setVisible(False)
+        self.path_edit.returnPressed.connect(self._commit_edit)
+        self.path_edit.editingFinished.connect(self.stop_editing)
+        completion_model = QFileSystemModel(self)
+        completion_model.setFilter(QDir.Filter.AllDirs | QDir.Filter.NoDotAndDotDot | QDir.Filter.Drives)
+        completion_model.setRootPath("")
+        completer = QCompleter(completion_model, self)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.path_edit.setCompleter(completer)
+        self.main_layout.addWidget(self.path_edit)
+        self.setToolTip("Click an empty spot to type a path (Ctrl+L)")
         
         # Connect scrollbar signals to update scroll buttons
         self.scroll_area.horizontalScrollBar().valueChanged.connect(self.update_scroll_buttons)
     
+    def is_editing(self):
+        return self.path_edit.isVisible()
+
+    def start_editing(self):
+        """Replace the crumbs with a text field holding the full path, selected."""
+        if self.is_editing():
+            return
+        self.path_edit.setText(self.last_path)
+        for widget in (self.scroll_area, self.left_scroll, self.right_scroll):
+            widget.setVisible(False)
+        self.path_edit.setVisible(True)
+        self.path_edit.setFocus()
+        self.path_edit.selectAll()
+
+    def stop_editing(self):
+        """Show the crumbs again without navigating."""
+        if not self.is_editing():
+            return
+        self.path_edit.setVisible(False)
+        self.scroll_area.setVisible(True)
+        self.update_scroll_buttons()
+
+    def _commit_edit(self):
+        """Navigate to the typed path (~ and environment variables are expanded)."""
+        text = self.path_edit.text().strip().strip('"')
+        self.stop_editing()
+        if not text:
+            return
+        if text.lower() in ("this pc", "pc"):
+            self.path_changed.emit("pc")
+            return
+        path = os.path.expandvars(os.path.expanduser(text))
+        if os.path.isfile(path):
+            path = os.path.dirname(path)
+        self.path_changed.emit(path)
+
+    def mousePressEvent(self, event):
+        # Clicks on empty space (not on a crumb) switch to typing a path
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.start_editing()
+        super().mousePressEvent(event)
+
     def scroll_left(self):
         """Scroll to the left."""
         scrollbar = self.scroll_area.horizontalScrollBar()
