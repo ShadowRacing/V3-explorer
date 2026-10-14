@@ -7,12 +7,14 @@ threads (QImage is safe off the UI thread), cached in memory, and the view is
 told to repaint each item when its thumbnail is ready.
 """
 import os
+import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 
-from shadows_explorer.core.utils import is_valid_filename, paths_equal
+from shadows_explorer.core.disk_usage import folder_size
+from shadows_explorer.core.utils import format_size, is_valid_filename, paths_equal
 from PyQt6.QtGui import QColor, QFileSystemModel, QIcon, QImage, QImageReader, QPainter, QPixmap
 
 THUMBNAIL_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg"}
@@ -60,8 +62,9 @@ def framed_icon(image, size):
 
 
 class _Loader(QObject):
-    """Delivers thumbnails from worker threads to the UI thread."""
+    """Delivers thumbnails and folder sizes from worker threads to the UI thread."""
     loaded = pyqtSignal(str, object, QImage)
+    size_loaded = pyqtSignal(str, object)
 
 
 class ThumbnailFileSystemModel(QFileSystemModel):
@@ -91,6 +94,14 @@ class ThumbnailFileSystemModel(QFileSystemModel):
         self._loader.loaded.connect(self._on_loaded)
         self.setReadOnly(False)  # Allow renaming in place
 
+        # Folder sizes for the Size column (optional; a full walk per folder)
+        self.folder_sizes_enabled = False
+        self._folder_sizes = {}
+        self._sizes_pending = set()
+        self._size_cancel = threading.Event()
+        self._size_pool = ThreadPoolExecutor(max_workers=1)
+        self._loader.size_loaded.connect(self._on_size_loaded)
+
     def set_thumbnails_enabled(self, enabled):
         """Turn thumbnails on or off and repaint."""
         if enabled != self.thumbnails_enabled:
@@ -103,7 +114,51 @@ class ThumbnailFileSystemModel(QFileSystemModel):
             thumbnail = self._thumbnail(index)
             if thumbnail is not None:
                 return thumbnail
+        if role == Qt.ItemDataRole.DisplayRole and index.isValid() and index.column() == 1:
+            if not self.isDir(index):
+                # Same "1.2 MB" style as the rest of the app (Qt would say "1.14 MiB")
+                return format_size(self.size(index))
+            if self.folder_sizes_enabled:
+                return self._folder_size_text(self.filePath(index))
         return super().data(index, role)
+
+    # -------------------------- Folder sizes --------------------------
+
+    def set_folder_sizes_enabled(self, enabled):
+        """Show folder sizes in the Size column (calculated in the background)."""
+        if enabled != self.folder_sizes_enabled:
+            self.folder_sizes_enabled = enabled
+            self.layoutChanged.emit()
+
+    def clear_folder_sizes(self):
+        """Forget calculated sizes so they are measured again (e.g. on refresh)."""
+        self._folder_sizes.clear()
+        if self.folder_sizes_enabled:
+            self.layoutChanged.emit()
+
+    def _folder_size_text(self, path):
+        size = self._folder_sizes.get(path)
+        if size is not None:
+            return format_size(size)
+        if path not in self._sizes_pending:
+            self._sizes_pending.add(path)
+            self._size_pool.submit(self._measure_folder, path)
+        return "Calculating..."
+
+    def _measure_folder(self, path):
+        # Worker thread
+        total, _, _ = folder_size(path, self._size_cancel)
+        if not self._size_cancel.is_set():
+            self._loader.size_loaded.emit(path, total)
+
+    def _on_size_loaded(self, path, total):
+        if self._closed:
+            return
+        self._sizes_pending.discard(path)
+        self._folder_sizes[path] = total
+        index = self.index(path, 1)
+        if index.isValid():
+            self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole])
 
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if role != Qt.ItemDataRole.EditRole or not index.isValid() or index.column() != 0:
@@ -163,7 +218,9 @@ class ThumbnailFileSystemModel(QFileSystemModel):
             self.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole])
 
     def shutdown(self):
-        """Stop the worker threads (pending thumbnails are dropped)."""
+        """Stop the worker threads (pending thumbnails and sizes are dropped)."""
         self._closed = True
+        self._size_cancel.set()  # Stops a folder walk that is already running
         self._pool.shutdown(wait=False, cancel_futures=True)
+        self._size_pool.shutdown(wait=False, cancel_futures=True)
 

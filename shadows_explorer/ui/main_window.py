@@ -32,6 +32,7 @@ from shadows_explorer.core.archive import (ArchiveCancelled, archive_stem, archi
 from shadows_explorer.core.background import BackgroundJob
 from shadows_explorer.core.bulk_rename import execute_renames
 from shadows_explorer.ui.dialogs.bulk_rename import BulkRenameDialog
+from shadows_explorer.ui.dialogs.disk_usage import DiskUsageDialog
 from shadows_explorer.ui.dual_pane import FolderPane
 from shadows_explorer.ui.thumbnails import ThumbnailFileSystemModel
 from shadows_explorer.core.grouping import GROUP_MODES, SORT_KEYS, group_entries, list_entries, sort_entries
@@ -84,6 +85,7 @@ MENU_ICONS = {
     "Remove from Recent": "close", "Clear Recent Items": "delete",
     "Open with": "window", "Send to": "copy_to", "Compressed (zip) folder": "archive",
     "Choose program...": "folder", "Choose another app...": "window", "Choose folder...": "folder",
+    "Analyze Disk Usage": "usage",
 }
 
 
@@ -733,6 +735,7 @@ class ModernExplorer(QMainWindow):
         view_mode = int(self.settings.value("view_mode", VIEW_ICONS))
         if view_mode in (VIEW_ICONS, VIEW_LIST, VIEW_DETAILS):
             self.view_mode_combo.setCurrentIndex(view_mode)
+        self.file_model.set_folder_sizes_enabled(self.settings.value("folder_sizes", False, type=bool))
         sort_key = self.settings.value("sort_key", "name")
         self.apply_sort(sort_key if sort_key in SORT_KEYS else "name",
                         self.settings.value("sort_descending", False, type=bool))
@@ -942,6 +945,7 @@ class ModernExplorer(QMainWindow):
             pinned = self.navigation_panel.is_favorite(self.current_path)
             menu.addAction("Unpin This Folder" if pinned else "Pin This Folder to Favorites",
                            self.toggle_favorite_current)
+            menu.addAction("Analyze Disk Usage", lambda: self.show_disk_usage(self.current_path))
             menu.addAction("Properties", lambda: self.show_properties(self.current_path))
             self._decorate_menu(menu)
             menu.exec(view.viewport().mapToGlobal(position))
@@ -956,6 +960,7 @@ class ModernExplorer(QMainWindow):
             new_window_action = menu.addAction("Open in New Window")
             pinned = self.navigation_panel.is_favorite(paths[0])
             pin_action = menu.addAction("Unpin from Favorites" if pinned else "Pin to Favorites")
+            menu.addAction("Analyze Disk Usage", lambda: self.show_disk_usage(paths[0]))
         menu.addSeparator()
         to_pane_action = move_to_pane_action = None
         if self.folder_pane.isVisible():
@@ -1839,6 +1844,11 @@ class ModernExplorer(QMainWindow):
             action = menu.addAction(label, lambda d=descending: self.apply_sort(self.sort_key, d))
             action.setCheckable(True)
             action.setChecked(self.sort_descending == descending)
+        menu.addSeparator()
+        sizes = menu.addAction("Show folder sizes", lambda: self.set_folder_sizes(not self.file_model.folder_sizes_enabled))
+        sizes.setCheckable(True)
+        sizes.setChecked(self.file_model.folder_sizes_enabled)
+        sizes.setToolTip("Measure folders in the background and show their size in the details view")
 
     def _fill_group_menu(self):
         menu = self.group_button.menu()
@@ -1861,6 +1871,31 @@ class ModernExplorer(QMainWindow):
         self.settings.setValue("sort_descending", descending)
         if self.group_mode != "none" and self.current_view == "files":
             self._refresh_grouped()
+
+    def set_folder_sizes(self, enabled):
+        """Show folder sizes in the details view's Size column."""
+        self.file_model.set_folder_sizes_enabled(enabled)
+        self.settings.setValue("folder_sizes", enabled)
+
+    def show_disk_usage(self, path):
+        """Open the disk usage breakdown for a folder (a separate window)."""
+        dialog = DiskUsageDialog(path, self._show_in_main_window, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+
+    def _show_in_main_window(self, path):
+        """Go to a folder, or to a file's folder with the file selected."""
+        if os.path.isdir(path):
+            self.navigate_to(path)
+            return
+        self.navigate_to(os.path.dirname(path))
+        if self.current_view == "files" and self._active_file_view() is not self.grouped_view:
+            index = self.file_model.index(path)
+            if index.isValid():
+                self._active_file_view().setCurrentIndex(index)
+                self._active_file_view().scrollTo(index)
+        self.raise_()
+        self.activateWindow()
 
     def _on_header_sort(self, column, order):
         """A details-view header click also sets the sort for the other views."""
@@ -2444,6 +2479,7 @@ class ModernExplorer(QMainWindow):
         elif self.current_view == "recent":
             self.show_recent_view(add_to_history=False)
         else:
+            self.file_model.clear_folder_sizes()
             self._show_directory(self.current_path)
         if self.folder_pane.isVisible():
             self.folder_pane.refresh()
