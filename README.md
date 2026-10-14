@@ -14,6 +14,8 @@ A modern file manager for Windows, macOS and Linux, built with Python and PyQt6.
   (prefix a search with `AllDrives:` to search every drive)
 - Copy, cut, paste, rename and delete, using the system clipboard so it works with other file managers
 - Delete moves items to the Recycle Bin / Trash; undo for copy, move and rename
+- Compress to ZIP and extract .zip / .tar archives in the background, with progress, cancel and undo
+  ("Extract" uses a new folder so files never spill out; archives can't write outside it)
 - Safety checks before deleting from system folders or opening downloaded or executable files
 - Preview panel: images (with dimensions), PDFs (first page), rendered Markdown,
   syntax-highlighted code, plain text, and folder summaries
@@ -59,6 +61,7 @@ python main.py C:\Projects  # or start in a specific folder
 | `explorer.py` | Main window: navigation, file operations, search UI |
 | `navigation_panel.py` | Sidebar, including Favorites |
 | `file_views.py` | Folder views with drag and drop |
+| `archive_ops.py`, `background.py` | Zip/unzip, and running slow jobs off the UI thread |
 | `breadcrumb_bar.py` | Clickable path bar |
 | `drive_components.py` | "This PC" drive overview |
 | `file_searcher.py` | Background search engine and filters |

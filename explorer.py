@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (QMainWindow, QSplitter, QWidget, QVBoxLayout,
                             QProgressBar, QListView, QTreeView, QComboBox,
                             QInputDialog, QDialog, QTextEdit, QFrame, QDateEdit, QRadioButton, QGroupBox,
                             QSpinBox, QCheckBox, QApplication, QStackedWidget, QProgressDialog,
-                            QTabBar, QScrollArea)
+                            QTabBar, QScrollArea, QFileDialog)
 from PyQt6.QtCore import Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl, QSettings
 from PyQt6.QtGui import QFileSystemModel, QDesktopServices, QKeySequence, QShortcut
 
@@ -25,6 +25,9 @@ from file_operation_safety_manager import FileOperationSafetyManager
 from navigation_panel import NavigationPanel
 from file_views import FileListView, FileTreeView
 from icons import FileIconProvider, file_type_icon, ui_icon
+from archive_ops import (ArchiveCancelled, archive_stem, archive_top_level_names, create_zip,
+                         extract_archive, extract_destination, is_archive, suggest_zip_path)
+from background import BackgroundJob
 from breadcrumb_bar import FixedBreadcrumbBar
 from drive_components import DrivesView
 from preview_pane import PreviewPane
@@ -56,6 +59,7 @@ MENU_ICONS = {
     "Pin to Favorites": "star", "Unpin from Favorites": "star",
     "Pin This Folder to Favorites": "star", "Unpin This Folder": "star",
     "Icons": "view_icons", "List": "view_list", "Details": "view_details", "Hidden files": "hidden",
+    "Compress to ZIP": "archive", "Extract": "extract", "Extract to...": "extract",
 }
 
 
@@ -127,6 +131,7 @@ class ModernExplorer(QMainWindow):
         # Safety checks and undo
         self.safety_manager = FileOperationSafetyManager(self)
         self.operation_history = []
+        self._jobs = set()  # Background jobs still running
 
         self.setup_ui()
         self._connect_search_signals()
@@ -631,6 +636,8 @@ class ModernExplorer(QMainWindow):
     def closeEvent(self, event):
         """Stop background work and save preferences on close."""
         self.file_searcher.stop()
+        for job in list(self._jobs):
+            job.cancel.set()
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("view_mode", self.view_mode_combo.currentIndex())
         self.settings.setValue("preview_visible", self.preview_pane.isVisible())
@@ -644,15 +651,27 @@ class ModernExplorer(QMainWindow):
         """The icon/list view or the details view, whichever is showing."""
         return self.detail_view if self.views_stack.currentWidget() is self.detail_view else self.file_view
 
+    @staticmethod
+    def _selected_first_column(view):
+        """One index per selected row, in column 0.
+
+        selectedRows() only reports rows with every column selected, which a
+        QListView (one visible column) never does, so filter the indexes instead.
+        """
+        seen, indexes = set(), []
+        for index in view.selectionModel().selectedIndexes():
+            if index.row() not in seen:
+                seen.add(index.row())
+                indexes.append(index.siblingAtColumn(0))
+        return indexes
+
     def get_selected_file_paths(self):
         """Paths selected in the folder view (one per row)."""
-        rows = self._active_file_view().selectionModel().selectedRows(0)
-        return [self.file_model.filePath(index) for index in rows]
+        return [self.file_model.filePath(index) for index in self._selected_first_column(self._active_file_view())]
 
     def get_selected_search_paths(self):
         """Paths selected in the search results (one per row)."""
-        rows = self.search_view.selectionModel().selectedRows(0)
-        paths = [index.data(PATH_ROLE) for index in rows]
+        paths = [index.data(PATH_ROLE) for index in self._selected_first_column(self.search_view)]
         return [p for p in paths if p and os.path.exists(p)]
 
     def selected_paths(self):
@@ -809,6 +828,12 @@ class ModernExplorer(QMainWindow):
         copy_action = menu.addAction("Copy")
         copy_path_action = menu.addAction("Copy as Path")
         menu.addSeparator()
+        compress_action = menu.addAction("Compress to ZIP")
+        extract_action = extract_to_action = None
+        if single and is_archive(paths[0]):
+            extract_action = menu.addAction("Extract")
+            extract_to_action = menu.addAction("Extract to...")
+        menu.addSeparator()
         delete_action = menu.addAction("Delete")
         rename_action = menu.addAction("Rename")
         rename_action.setEnabled(single)
@@ -831,6 +856,12 @@ class ModernExplorer(QMainWindow):
             self.copy_selected_files(paths)
         elif action == cut_action:
             self.cut_selected_files(paths)
+        elif action == compress_action:
+            self.compress_files(paths)
+        elif extract_action is not None and action == extract_action:
+            self.extract_archive_file(paths[0])
+        elif extract_to_action is not None and action == extract_to_action:
+            self.extract_archive_file(paths[0], choose_folder=True)
         elif action == copy_path_action:
             QApplication.clipboard().setText("\n".join(paths))
             self.status_label.setText(f"Copied {len(paths)} path(s)")
@@ -1317,6 +1348,117 @@ class ModernExplorer(QMainWindow):
             QMessageBox.warning(self, "Error", f"A file named '{file_name}' already exists.")
         except OSError as e:
             QMessageBox.critical(self, "Error", f"Could not create file: {e}")
+
+    # -------------------------- Archives --------------------------
+
+    def _run_job(self, title, label, func, on_success):
+        """Run func in the background with a cancellable progress dialog.
+
+        Args:
+            title: Dialog title
+            label: Text shown while working
+            func: Called as func(progress=..., cancel=...) in a worker thread
+            on_success: Called with func's result in the UI thread
+        """
+        job = BackgroundJob(func, self)
+        dialog = QProgressDialog(label, "Cancel", 0, 100, self)
+        dialog.setWindowTitle(title)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setMinimumDuration(400)  # Quick jobs finish without a dialog
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.canceled.connect(job.cancel.set)
+        job.progress.connect(lambda done, total: dialog.setValue(int(done * 100 / max(total, 1))))
+
+        def finish():
+            dialog.close()
+            dialog.deleteLater()
+            self._jobs.discard(job)
+            job.deleteLater()
+
+        def succeeded(result):
+            finish()
+            on_success(result)
+
+        def failed(error):
+            finish()
+            self.update_status()
+            if isinstance(error, ArchiveCancelled):
+                self.status_label.setText(f"{title} cancelled")
+            else:
+                QMessageBox.warning(self, title, f"{title} failed:\n\n{error}")
+
+        job.succeeded.connect(succeeded)
+        job.failed.connect(failed)
+        self._jobs.add(job)
+        job.start()
+        return job
+
+    def compress_files(self, paths=None):
+        """Compress files and folders into a new .zip next to them."""
+        paths = paths or self.selected_paths()
+        if not paths:
+            return
+        suggested = suggest_zip_path(paths)
+        folder = os.path.dirname(suggested)
+        name, ok = QInputDialog.getText(self, "Compress to ZIP", "Archive name:",
+                                        text=os.path.basename(suggested))
+        name = name.strip()
+        if not ok or not name:
+            return
+        if not name.lower().endswith(".zip"):
+            name += ".zip"
+        if not is_valid_filename(name):
+            QMessageBox.warning(self, "Invalid Name", f"'{name}' is not a valid file name.")
+            return
+        zip_path = os.path.join(folder, name)
+        if os.path.exists(zip_path):
+            QMessageBox.warning(self, "Compress to ZIP", f"'{name}' already exists.")
+            return
+        if not self._can_modify_folder(folder, "create an archive"):
+            return
+
+        def done(result):
+            self.add_operation_to_history("copy", [(paths[0], zip_path)])
+            self.update_status()
+            self.status_label.setText(f"Compressed {len(paths)} item(s) into '{name}'")
+
+        self._run_job("Compress", f"Compressing into {name}...",
+                      lambda progress, cancel: create_zip(paths, zip_path, progress, cancel), done)
+
+    def extract_archive_file(self, archive_path, choose_folder=False):
+        """Extract an archive.
+
+        By default a new folder named after the archive is used (or the
+        archive's single top-level folder), so files never spill into the
+        current folder. With choose_folder the user picks the destination.
+        """
+        try:
+            if choose_folder:
+                destination = QFileDialog.getExistingDirectory(
+                    self, "Extract to", os.path.dirname(archive_path))
+                if not destination:
+                    return
+                created = [os.path.join(destination, top) for top in archive_top_level_names(archive_path)
+                           if not os.path.exists(os.path.join(destination, top))]
+            else:
+                destination, created_item = extract_destination(archive_path)
+                created = [created_item]
+        except Exception as e:
+            QMessageBox.warning(self, "Extract", f"Cannot read '{os.path.basename(archive_path)}':\n\n{e}")
+            return
+        if not self._can_modify_folder(os.path.dirname(created[0]) if created else destination, "extract files"):
+            return
+
+        def done(result):
+            if created:
+                self.add_operation_to_history("copy", [(archive_path, path) for path in created])
+            self.update_status()
+            self.status_label.setText(f"Extracted '{archive_stem(archive_path)}'")
+
+        self._run_job("Extract", f"Extracting {os.path.basename(archive_path)}...",
+                      lambda progress, cancel: extract_archive(archive_path, destination, progress, cancel),
+                      done)
 
     # -------------------------- Undo --------------------------
 

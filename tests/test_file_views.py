@@ -21,3 +21,23 @@ def test_missing_path_is_not_same_device(tmp_path):
     assert not same_device(str(tmp_path / "missing"), str(tmp_path))
     # Unknown device: copy rather than move, so nothing is lost
     assert not should_move([str(tmp_path / "missing")], str(tmp_path), NO_KEYS)
+
+
+def test_list_view_selection_is_found(qapp):
+    # Regression: a QListView selects one column, so selectedRows() returned
+    # nothing and Copy/Delete/menus ignored the selection in icon and list views
+    from PyQt6.QtGui import QStandardItem, QStandardItemModel
+    from PyQt6.QtWidgets import QListView
+    from explorer import ModernExplorer
+
+    model = QStandardItemModel(0, 4)
+    for name in ("a", "b", "c"):
+        model.appendRow([QStandardItem(name)] + [QStandardItem("x") for _ in range(3)])
+    view = QListView()
+    view.setModel(model)
+    selection = view.selectionModel()
+    selection.select(model.index(0, 0), selection.SelectionFlag.Select)
+    selection.select(model.index(2, 0), selection.SelectionFlag.Select)
+
+    indexes = ModernExplorer._selected_first_column(view)
+    assert [index.data() for index in indexes] == ["a", "c"]
