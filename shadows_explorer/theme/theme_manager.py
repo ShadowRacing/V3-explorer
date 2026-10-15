@@ -39,6 +39,22 @@ def arrow_file(direction, color):
     return _svg_file(f"arrow-{direction}", color, "M4 10l4-4 4 4" if direction == "up" else "M4 6l4 4 4-4", 1.8)
 
 
+BASE_FONT_PX = 13
+
+
+def base_font_points():
+    """The app's base font size, 13 px on the primary screen, in points.
+
+    The stylesheet sets it in points because a font sized in px has pointSize() -1,
+    and Qt's Windows 11 style scales that for the arrows of menus and menu buttons,
+    printing "QFont::setPointSize: Point size <= 0 (-1)".
+    """
+    app = QGuiApplication.instance()
+    screen = app.primaryScreen() if app is not None else None
+    dpi = screen.logicalDotsPerInchY() if screen is not None else 96
+    return round(BASE_FONT_PX * 72 / dpi, 2)
+
+
 def build_stylesheet(palette):
     """The app stylesheet filled in with a palette's colors."""
     images = {
@@ -49,7 +65,7 @@ def build_stylesheet(palette):
         "arrow_up_off_image": arrow_file("up", palette["muted"]),
         "arrow_down_off_image": arrow_file("down", palette["muted"]),
     }
-    return STYLESHEET.format(**images, **palette)
+    return STYLESHEET.format(**images, **palette, font_size=base_font_points())
 
 
 PALETTES = {
@@ -94,7 +110,7 @@ QWidget {{
     background-color: {bg};
     color: {text};
     font-family: {font};
-    font-size: 13px;
+    font-size: {font_size}pt;
 }}
 QToolTip {{
     background-color: {raised}; color: {text};
