@@ -21,19 +21,6 @@ from PyQt6.QtCore import Qt, QFileInfo, QSize, pyqtSignal
 from shadows_explorer.theme.icons import FileIconProvider, ui_icon
 from shadows_explorer.core.utils import format_size
 
-try:
-    from PyQt6.QtPdf import QPdfDocument
-except ImportError:  # QtPdf is optional
-    QPdfDocument = None
-
-try:
-    from pygments import highlight
-    from pygments.formatters import HtmlFormatter
-    from pygments.lexers import get_lexer_for_filename
-    from pygments.util import ClassNotFound
-except ImportError:  # Pygments is optional
-    highlight = None
-
 TEXT_EXTENSIONS = {'.txt', '.log', '.ini', '.cfg', '.conf', '.csv', '.tsv', '.env', '.gitignore'}
 CODE_EXTENSIONS = {'.py', '.pyw', '.js', '.ts', '.jsx', '.tsx', '.html', '.htm', '.css', '.scss',
                    '.xml', '.json', '.yaml', '.yml', '.toml', '.bat', '.cmd', '.ps1', '.sh',
@@ -67,7 +54,12 @@ def looks_binary(file_path):
 
 def highlight_code(code, file_path, dark):
     """Syntax-highlight code as HTML with inline styles, or None without Pygments."""
-    if highlight is None:
+    try:  # Imported here, not at start-up: Pygments is optional and slow to load
+        from pygments import highlight
+        from pygments.formatters import HtmlFormatter
+        from pygments.lexers import get_lexer_for_filename
+        from pygments.util import ClassNotFound
+    except ImportError:
         return None
     try:
         lexer = get_lexer_for_filename(file_path, stripnl=False)
@@ -336,7 +328,9 @@ class PreviewPane(QWidget):
         if not self.pdfs_enabled:
             self._show_message("PDF previews are off\n(Settings → Performance)")
             return "Unknown"
-        if QPdfDocument is None:
+        try:  # Imported here so start-up does not load QtPdf
+            from PyQt6.QtPdf import QPdfDocument
+        except ImportError:  # QtPdf is optional
             self._show_message("PDF preview needs the QtPdf module")
             return "Unknown"
         document = QPdfDocument(self)

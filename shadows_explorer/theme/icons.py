@@ -10,14 +10,14 @@ every platform and the interface icons can be recolored to match the theme.
 """
 import os
 
-from PyQt6.QtCore import QByteArray, QRectF, Qt
-from PyQt6.QtGui import QIcon, QPainter, QPixmap
+from PyQt6.QtCore import QByteArray, QRectF, QSize, Qt
+from PyQt6.QtGui import QIcon, QIconEngine, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
-from PyQt6.QtWidgets import QFileIconProvider
+from PyQt6.QtWidgets import QApplication, QFileIconProvider, QStyleOption
 
 from shadows_explorer.core.file_types import file_kind
 
-ICON_SIZES = (16, 20, 24, 32, 48, 64, 96, 128)
+ICON_SIZES = (16, 20, 24, 32, 48, 64, 96, 128)  # Sizes the icons report as available
 
 # 24x24 line icons; {c} is replaced with the stroke color
 UI_ICONS = {
@@ -112,19 +112,71 @@ def _svg_document(body, view_box="0 0 24 24"):
     return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{view_box}">{body}</svg>'
 
 
-def _icon_from_svg(svg):
-    """Render an SVG at several sizes into a QIcon (crisp at any size)."""
-    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
-    icon = QIcon()
-    for size in ICON_SIZES:
-        pixmap = QPixmap(size, size)
+class _SvgIconEngine(QIconEngine):
+    """Draws an SVG icon at the size Qt asks for, the first time it asks.
+
+    Rendering every icon at every size up front cost a noticeable part of
+    start-up; most icons are only ever shown at one or two sizes.
+    """
+
+    def __init__(self, svg):
+        super().__init__()
+        self._svg = svg
+        self._renderer = None
+        self._pixmaps = {}  # (side, mode, scale) -> QPixmap
+
+    def _render(self, side):
+        if self._renderer is None:
+            self._renderer = QSvgRenderer(QByteArray(self._svg.encode("utf-8")))
+        pixmap = QPixmap(side, side)
         pixmap.fill(Qt.GlobalColor.transparent)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        renderer.render(painter, QRectF(0, 0, size, size))
+        self._renderer.render(painter, QRectF(0, 0, side, side))
         painter.end()
-        icon.addPixmap(pixmap)
-    return icon
+        return pixmap
+
+    def actualSize(self, size, mode, state):
+        side = min(size.width(), size.height())  # The icons are square
+        return QSize(side, side)
+
+    def scaledPixmap(self, size, mode, state, scale):
+        side = max(1, round(min(size.width(), size.height()) * scale))
+        key = (side, mode, scale)
+        pixmap = self._pixmaps.get(key)
+        if pixmap is None:
+            pixmap = self._render(side)
+            app = QApplication.instance()
+            if mode != QIcon.Mode.Normal and app is not None:
+                # The same grayed-out look Qt gives pixmap icons
+                option = QStyleOption()
+                option.palette = app.palette()
+                pixmap = app.style().generatedIconPixmap(mode, pixmap, option)
+            pixmap.setDevicePixelRatio(scale)
+            self._pixmaps[key] = pixmap
+        return pixmap
+
+    def pixmap(self, size, mode, state):
+        return self.scaledPixmap(size, mode, state, 1.0)
+
+    def paint(self, painter, rect, mode, state):
+        device = painter.device()
+        scale = device.devicePixelRatioF() if device is not None else 1.0
+        pixmap = self.scaledPixmap(rect.size(), mode, state, scale)
+        side = min(rect.width(), rect.height())
+        target = QRectF(rect.x() + (rect.width() - side) / 2, rect.y() + (rect.height() - side) / 2, side, side)
+        painter.drawPixmap(target, pixmap, QRectF(pixmap.rect()))
+
+    def availableSizes(self, mode=QIcon.Mode.Normal, state=QIcon.State.Off):
+        return [QSize(size, size) for size in ICON_SIZES]
+
+    def clone(self):
+        return _SvgIconEngine(self._svg)
+
+
+def _icon_from_svg(svg):
+    """A QIcon drawn from an SVG, crisp at any size."""
+    return QIcon(_SvgIconEngine(svg))
 
 
 _cache = {}
