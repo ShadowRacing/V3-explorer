@@ -5,4 +5,4 @@ Layout:
     ui/     The main window, views, panes and dialogs
     theme/  Themes and the icon set
 """
-__version__ = "1.0.0"
+__version__ = "3.0"  # the one place to change the version; everything else reads it

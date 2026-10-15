@@ -107,6 +107,7 @@ QWidget#appbar {{ border-bottom: 1px solid {border}; }}
 QWidget#tab_row {{ border-bottom: 1px solid {border}; }}
 QWidget#action_bar {{ background-color: {surface}; border-top: 1px solid {border}; }}
 QLabel#app_title {{ font-weight: 600; font-size: 15px; background: transparent; }}
+QLabel#app_version {{ font-size: 11px; color: {muted}; background: transparent; }}
 QLabel#status_label {{ color: {muted}; background: transparent; }}
 QWidget#view_controls {{ background-color: {bg}; }}
 
