@@ -32,9 +32,6 @@ from shadows_explorer.core.archive import (ArchiveCancelled, archive_stem, archi
                          extract_archive, extract_destination, is_archive, suggest_zip_path)
 from shadows_explorer.core.background import BackgroundJob
 from shadows_explorer.core.bulk_rename import execute_renames
-from shadows_explorer.ui.dialogs.bulk_rename import BulkRenameDialog
-from shadows_explorer.ui.dialogs.disk_usage import DiskUsageDialog
-from shadows_explorer.ui.dialogs.duplicates import DuplicatesDialog
 from shadows_explorer.ui.command_palette import Command, CommandPalette
 from shadows_explorer.core.terminal import terminal_command
 from shadows_explorer.ui.dual_pane import FolderPane
@@ -55,8 +52,6 @@ from shadows_explorer.core.tags import TagStore
 from shadows_explorer.core.performance import PerformanceSettings
 from shadows_explorer.ui.tags import TagDialog, TagDotsDelegate, add_tags_submenu, tag_dot_icon
 from shadows_explorer.ui.search_results_model import SearchResultsModel, PATH_ROLE
-from shadows_explorer.ui.dialogs.settings import SettingsDialog
-from shadows_explorer.ui.dialogs.properties import PropertiesDialog
 from shadows_explorer.core.utils import (IS_WINDOWS, NavigationHistory, format_size, normalize_path, paths_equal,
                    is_within, unique_target_path, is_valid_filename)
 
@@ -1627,6 +1622,7 @@ class ModernExplorer(QMainWindow):
 
     def bulk_rename(self, paths):
         """Rename several items at once with a live preview (see BulkRenameDialog)."""
+        from shadows_explorer.ui.dialogs.bulk_rename import BulkRenameDialog  # Loaded on first use
         dialog = BulkRenameDialog(paths, self)
         if not dialog.exec():
             return
@@ -1646,6 +1642,7 @@ class ModernExplorer(QMainWindow):
 
     def show_properties(self, path):
         """Show the properties dialog for a file or folder."""
+        from shadows_explorer.ui.dialogs.properties import PropertiesDialog  # Loaded on first use
         if path and os.path.exists(path):
             PropertiesDialog(path, self).exec()
 
@@ -2076,12 +2073,14 @@ class ModernExplorer(QMainWindow):
 
     def show_disk_usage(self, path):
         """Open the disk usage breakdown for a folder (a separate window)."""
+        from shadows_explorer.ui.dialogs.disk_usage import DiskUsageDialog  # Loaded on first use
         dialog = DiskUsageDialog(path, self._show_in_main_window, self)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
 
     def find_duplicates(self, folder):
         """Open the duplicate finder for a folder (a separate window)."""
+        from shadows_explorer.ui.dialogs.duplicates import DuplicatesDialog  # Loaded on first use
         dialog = DuplicatesDialog(folder, self._recycle_duplicates, self._show_in_main_window, self)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.show()
@@ -2667,6 +2666,7 @@ class ModernExplorer(QMainWindow):
 
     def show_settings(self, page=None):
         """Show the settings dialog, optionally on a page ("Appearance", "Performance" or "About")."""
+        from shadows_explorer.ui.dialogs.settings import SettingsDialog  # Loaded on first use
         if not self.settings_dialog:
             self.settings_dialog = SettingsDialog(self.theme_manager, self.performance, self, settings=self.settings)
             self.settings_dialog.performance_changed.connect(self.apply_performance)
