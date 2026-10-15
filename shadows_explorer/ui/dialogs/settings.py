@@ -1,16 +1,20 @@
 """
 Settings dialog module for Shadows File Explorer.
 
-Pages are listed on the left: Appearance (theme, start-up video) and
-Performance (threads, caches, size limits and refresh rates, with presets).
+Pages are listed on the left: Appearance (theme, start-up video), Performance
+(threads, caches, size limits and refresh rates, with presets) and About
+(version).
 Changes apply at once.
 """
+import platform
 from dataclasses import fields, replace
 
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QGroupBox,
                              QListWidget, QStackedWidget, QWidget, QFormLayout, QSpinBox, QCheckBox,
                              QScrollArea, QFrame)
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QT_VERSION_STR, PYQT_VERSION_STR
+
+from shadows_explorer import __version__
 
 from shadows_explorer.core.performance import (LIMITS, PRESET_DESCRIPTIONS, PRESETS, PerformanceSettings)
 from shadows_explorer.ui.splash import SPLASH_SETTING, splash_enabled
@@ -92,7 +96,8 @@ class SettingsDialog(QDialog):
         self.pages_list = QListWidget()
         self.pages_list.setFixedWidth(170)
         self.pages = QStackedWidget()
-        for name, page in (("Appearance", self._appearance_page()), ("Performance", self._performance_page())):
+        for name, page in (("Appearance", self._appearance_page()), ("Performance", self._performance_page()),
+                           ("About", self._about_page())):
             self.pages_list.addItem(name)
             self.pages.addWidget(page)
         self.pages_list.currentRowChanged.connect(self.pages.setCurrentIndex)
@@ -109,7 +114,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(buttons)
 
     def show_page(self, name):
-        """Open the dialog on a page ("Appearance" or "Performance")."""
+        """Open the dialog on a page ("Appearance", "Performance" or "About")."""
         matches = self.pages_list.findItems(name, Qt.MatchFlag.MatchExactly)
         if matches:
             self.pages_list.setCurrentItem(matches[0])
@@ -163,6 +168,26 @@ class SettingsDialog(QDialog):
     def update_theme_preview(self):
         theme = self.theme_manager.current_theme
         self.theme_preview.setText(f"Preview of {theme.capitalize()} Theme")
+
+    # -------------------------- About --------------------------
+
+    def _about_page(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        group = QGroupBox("About")
+        group_layout = QVBoxLayout(group)
+        title = QLabel("Shadows File Explorer")
+        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        group_layout.addWidget(title)
+        self.version_label = QLabel(f"Version {__version__}")
+        self.version_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        group_layout.addWidget(self.version_label)
+        built_with = QLabel(f"Python {platform.python_version()}, Qt {QT_VERSION_STR}, PyQt {PYQT_VERSION_STR}")
+        built_with.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        group_layout.addWidget(built_with)
+        layout.addWidget(group)
+        layout.addStretch()
+        return page
 
     # -------------------------- Performance --------------------------
 

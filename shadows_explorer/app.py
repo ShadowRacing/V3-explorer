@@ -11,6 +11,7 @@ import sys
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QApplication
 
+from shadows_explorer import __version__
 from shadows_explorer.ui.splash import SplashScreen, splash_enabled
 
 
@@ -19,6 +20,7 @@ def setup_application():
     # Qt 6 handles high DPI scaling automatically
     app = QApplication(sys.argv)
     app.setApplicationName("Shadows File Explorer")
+    app.setApplicationVersion(__version__)
     app.setOrganizationName("ShadowsExplorer")
     return app
 
