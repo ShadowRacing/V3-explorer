@@ -101,8 +101,8 @@ The app is in `dist/ShadowsExplorer/` (start `ShadowsExplorer.exe` on
 Windows); on macOS there is also `dist/Shadows Explorer.app`. It is a folder
 rather than one big exe on purpose: a one-file exe unpacks all of Qt on every
 launch, which makes it start several seconds slower. Everything in
-`resources/`, such as the splash video, is bundled, and an icon at
-`resources/icons/app.ico` (or `app.icns` on macOS) is used when present.
+`shadows_explorer/resources/`, such as the splash video, is bundled, and an
+icon there named `app.ico` (or `app.icns` on macOS) is used when present.
 
 ## Keyboard shortcuts
 

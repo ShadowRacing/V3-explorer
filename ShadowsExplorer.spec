@@ -10,8 +10,9 @@ dist/Shadows Explorer.app). It is a folder build, not a single file: a
 single-file exe unpacks all of Qt to a temporary folder on every launch,
 which adds seconds to start-up.
 
-Everything in resources/ (such as the start-up splash video) is bundled as
-resources/ next to the code; at run time it is found under sys._MEIPASS.
+Everything in shadows_explorer/resources/ (such as the start-up splash video)
+is bundled at the same place next to the code, so modules find it from
+Path(__file__) both from source and in the build.
 """
 import os
 import re
@@ -23,12 +24,13 @@ NAME = "ShadowsExplorer"
 with open(os.path.join(ROOT, "shadows_explorer", "__init__.py"), encoding="utf-8") as f:
     VERSION = re.search(r'__version__\s*=\s*["\']([^"\']+)', f.read()).group(1)
 
+RESOURCES = os.path.join("shadows_explorer", "resources")
 datas = []
-if os.path.isdir(os.path.join(ROOT, "resources")):
-    datas.append((os.path.join(ROOT, "resources"), "resources"))
+if os.path.isdir(os.path.join(ROOT, RESOURCES)):
+    datas.append((os.path.join(ROOT, RESOURCES), RESOURCES))
 
 # Optional icon for the exe and the macOS app, used when present
-ICON = os.path.join(ROOT, "resources", "icons", "app.icns" if sys.platform == "darwin" else "app.ico")
+ICON = os.path.join(ROOT, RESOURCES, "app.icns" if sys.platform == "darwin" else "app.ico")
 if not os.path.exists(ICON):
     ICON = None
 
@@ -38,10 +40,11 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
-        # Loaded on first use, or only when installed; listed so they are bundled
+        # Imported lazily; listed so they are always bundled
         "PyQt6.QtPdf",
         "PyQt6.QtMultimedia",  # Splash video
         "PyQt6.QtMultimediaWidgets",
+        "shadows_explorer.ui.main_window",
     ],
     hookspath=[],
     hooksconfig={},
