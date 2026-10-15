@@ -86,6 +86,24 @@ pip install .                     # or: pip install ".[highlighting]"
 shadows-explorer                  # same as: python -m shadows_explorer
 ```
 
+## Building a standalone app
+
+`ShadowsExplorer.spec` builds the app with PyInstaller, so it runs on a
+computer without Python. Build on the system you are building for (a Windows
+build on Windows, and so on):
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller ShadowsExplorer.spec
+```
+
+The app is in `dist/ShadowsExplorer/` (start `ShadowsExplorer.exe` on
+Windows); on macOS there is also `dist/Shadows Explorer.app`. It is a folder
+rather than one big exe on purpose: a one-file exe unpacks all of Qt on every
+launch, which makes it start several seconds slower. Everything in
+`resources/`, such as the splash video, is bundled, and an icon at
+`resources/icons/app.ico` (or `app.icns` on macOS) is used when present.
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
@@ -119,6 +137,7 @@ shadows-explorer                  # same as: python -m shadows_explorer
 ```
 main.py                     Starts the app from a source checkout
 pyproject.toml              Package metadata and the shadows-explorer command
+ShadowsExplorer.spec        PyInstaller build of the standalone app
 shadows_explorer/
 ├── app.py                  Creates the QApplication and main window
 ├── core/                   File-system logic, no widgets (unit tested)
