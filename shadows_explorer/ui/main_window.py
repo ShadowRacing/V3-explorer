@@ -22,6 +22,7 @@ from PyQt6.QtCore import (Qt, QSize, QDir, QTimer, QStorageInfo, QMimeData, QUrl
                           QProcess, QStandardPaths, QItemSelection, QItemSelectionModel)
 from PyQt6.QtGui import QDesktopServices, QKeySequence, QShortcut
 
+from shadows_explorer import __version__
 from shadows_explorer.theme.theme_manager import ThemeManager
 from shadows_explorer.core.safety import FileOperationSafetyManager
 from shadows_explorer.ui.navigation_panel import NavigationPanel
@@ -53,6 +54,8 @@ from shadows_explorer.ui.tags import TagDialog, TagDotsDelegate, add_tags_submen
 from shadows_explorer.ui.search_results_model import SearchResultsModel, PATH_ROLE
 from shadows_explorer.core.utils import (IS_WINDOWS, NavigationHistory, format_size, normalize_path, paths_equal,
                    is_within, unique_target_path, is_valid_filename)
+
+WINDOW_TITLE = f"Shadows File Explorer {__version__}"
 
 # Clipboard format marking a "cut" (move) rather than a copy
 CUT_MIME = "application/x-shadows-explorer-cut"
@@ -124,7 +127,7 @@ class ModernExplorer(QMainWindow):
             start_path: Folder to open; defaults to the user's home folder
         """
         super().__init__()
-        self.setWindowTitle("Shadows File Explorer")
+        self.setWindowTitle(WINDOW_TITLE)
         self.setMinimumSize(1000, 600)
 
         self.settings = QSettings("ShadowsExplorer", "Preferences")
@@ -315,6 +318,10 @@ class ModernExplorer(QMainWindow):
         app_title = QLabel("Shadows Explorer")
         app_title.setObjectName("app_title")
         self.app_bar_layout.addWidget(app_title)
+        app_version = QLabel(f"v{__version__}")
+        app_version.setObjectName("app_version")
+        app_version.setToolTip(WINDOW_TITLE)
+        self.app_bar_layout.addWidget(app_version)
         self.app_bar_layout.addSpacing(12)
 
         # Navigation buttons
@@ -848,6 +855,7 @@ class ModernExplorer(QMainWindow):
             C("Show/Hide Folder Sizes", lambda: self.set_folder_sizes(not self.file_model.folder_sizes_enabled)),
             C("Pin/Unpin Current Folder", self.toggle_favorite_current, "Ctrl+D", in_files),
             C("Settings", self.show_settings),
+            C("About Shadows File Explorer", lambda: self.show_settings("About")),
         ]
         commands += [C(f"Sort by {SORT_LABELS[key]}", lambda k=key: self.apply_sort(k, self.sort_descending))
                      for key in SORT_KEYS]
@@ -2560,7 +2568,7 @@ class ModernExplorer(QMainWindow):
         self.grouped_view.populate(group_entries(sort_entries(entries, self.sort_key, self.sort_descending), "type"))
         self.views_stack.setCurrentWidget(self.grouped_view)
 
-        self.setWindowTitle(f"{name} - Shadows File Explorer")
+        self.setWindowTitle(f"{name} - {WINDOW_TITLE}")
         self._set_tab_title(name, f"tag:{name}")
         self.breadcrumb_bar.set_path(f"Tag: {name}")
         self.navigation_panel.set_active_item(f"tag_{name}")
@@ -2657,7 +2665,7 @@ class ModernExplorer(QMainWindow):
             self.navigate_to(path)
 
     def show_settings(self, page=None):
-        """Show the settings dialog, optionally on a page ("Appearance" or "Performance")."""
+        """Show the settings dialog, optionally on a page ("Appearance", "Performance" or "About")."""
         from shadows_explorer.ui.dialogs.settings import SettingsDialog  # Loaded on first use
         if not self.settings_dialog:
             self.settings_dialog = SettingsDialog(self.theme_manager, self.performance, self)
@@ -2769,7 +2777,7 @@ class ModernExplorer(QMainWindow):
         self.current_view = "drives"
         self.views_stack.setCurrentWidget(self.drives_view)
 
-        self.setWindowTitle("This PC - Shadows File Explorer")
+        self.setWindowTitle(f"This PC - {WINDOW_TITLE}")
         self._set_tab_title("This PC", "pc")
         self.breadcrumb_bar.set_path("This PC")
         self.navigation_panel.set_active_item("pc")
@@ -2795,7 +2803,7 @@ class ModernExplorer(QMainWindow):
         self.grouped_view.populate([(name, entries) for name, entries in groups if entries])
         self.views_stack.setCurrentWidget(self.grouped_view)
 
-        self.setWindowTitle("Recent - Shadows File Explorer")
+        self.setWindowTitle(f"Recent - {WINDOW_TITLE}")
         self._set_tab_title("Recent", "recent")
         self.breadcrumb_bar.set_path("Recent")
         self.navigation_panel.set_active_item("recent")
@@ -2935,7 +2943,7 @@ class ModernExplorer(QMainWindow):
 
         self.breadcrumb_bar.set_path(path)
         name = os.path.basename(os.path.normpath(path)) or path
-        self.setWindowTitle(f"{name} - Shadows File Explorer")
+        self.setWindowTitle(f"{name} - {WINDOW_TITLE}")
         self._set_tab_title(name, path)
 
         self._update_nav_buttons()
