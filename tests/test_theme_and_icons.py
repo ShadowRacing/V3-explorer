@@ -32,3 +32,17 @@ def test_icons_render(qapp):
         assert not ui_icon(name, "#000000").isNull(), name
     for kind in list(FILE_TYPE_COLORS) + ["folder", "folder_link"]:
         assert not file_type_icon(kind).isNull(), kind
+
+
+def test_base_font_has_a_point_size(qapp):
+    # A px font has pointSize() -1, which Qt's Windows 11 style passes to
+    # QFont.setPointSize when drawing menu arrows
+    from PyQt6.QtWidgets import QMenu, QToolButton
+    button = QToolButton()
+    button.setMenu(QMenu(button))
+    button.setStyleSheet(build_stylesheet(PALETTES["dark"]))
+    button.ensurePolished()
+    font = button.font()
+    assert font.pointSize() > 0
+    # Still 13 px on screen
+    assert round(font.pointSizeF() * button.logicalDpiY() / 72) == 13
