@@ -1,8 +1,9 @@
 """
 Settings dialog module for Shadows File Explorer.
 
-Pages are listed on the left: Appearance (theme) and Performance (threads,
-caches, size limits and refresh rates, with presets). Changes apply at once.
+Pages are listed on the left: Appearance (theme, start-up video) and
+Performance (threads, caches, size limits and refresh rates, with presets).
+Changes apply at once.
 """
 from dataclasses import fields, replace
 
@@ -12,6 +13,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBo
 from PyQt6.QtCore import Qt, pyqtSignal
 
 from shadows_explorer.core.performance import (LIMITS, PRESET_DESCRIPTIONS, PRESETS, PerformanceSettings)
+from shadows_explorer.ui.splash import SPLASH_SETTING, splash_enabled
 
 # (setting name, label, suffix, tooltip) per group; booleans have no suffix
 PERFORMANCE_GROUPS = [
@@ -59,6 +61,7 @@ class SettingsDialog(QDialog):
     Args:
         theme_manager: ThemeManager instance
         performance: The current PerformanceSettings
+        settings: QSettings for options saved straight from the dialog (the start-up video)
         parent: Parent widget
 
     Signals:
@@ -71,9 +74,10 @@ class SettingsDialog(QDialog):
     performance_changed = pyqtSignal(object)
     clear_thumbnails_requested = pyqtSignal()
 
-    def __init__(self, theme_manager, performance=None, parent=None):
+    def __init__(self, theme_manager, performance=None, parent=None, settings=None):
         super().__init__(parent)
         self.theme_manager = theme_manager
+        self.settings = settings
         self.performance = performance or PerformanceSettings()
         self.editors = {}
         self._updating = False
@@ -134,6 +138,14 @@ class SettingsDialog(QDialog):
         self.theme_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.update_theme_preview()
         group_layout.addWidget(self.theme_preview)
+
+        self.splash_check = QCheckBox("Play the start-up video")
+        self.splash_check.setToolTip("Shows the logo video while the app starts. "
+                                     "Click it or press any key to skip; --no-splash skips it for one run.")
+        self.splash_check.setChecked(splash_enabled(self.settings) if self.settings is not None else True)
+        self.splash_check.setEnabled(self.settings is not None)
+        self.splash_check.toggled.connect(self.on_splash_toggled)
+        group_layout.addWidget(self.splash_check)
         layout.addWidget(group)
         layout.addStretch()
         return page
@@ -143,6 +155,10 @@ class SettingsDialog(QDialog):
         self.theme_manager.set_theme(selected_theme)
         self.theme_changed.emit(selected_theme)
         self.update_theme_preview()
+
+    def on_splash_toggled(self, checked):
+        if self.settings is not None:
+            self.settings.setValue(SPLASH_SETTING, checked)
 
     def update_theme_preview(self):
         theme = self.theme_manager.current_theme

@@ -23,5 +23,8 @@ version = {attr = "shadows_explorer.__version__"}
 [tool.setuptools.packages.find]
 include = ["shadows_explorer*"]
 
+[tool.setuptools.package-data]
+"shadows_explorer.resources" = ["*.mp4", "*.png"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

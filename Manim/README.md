@@ -1,7 +1,9 @@
 # Rendering the Shadows File Explorer start-up video
 
-The video is `resources/videos/ShadowsExplorerLogo.mp4`, about 6.3 s, 1920x1080
-at 60 fps. Nothing in the app plays it yet.
+The video is `shadows_explorer/resources/ShadowsExplorerLogo.mp4`, about 6.3 s,
+1920x1080 at 60 fps. The app plays it at start-up (`shadows_explorer/ui/splash.py`);
+when the video cannot play it shows `ShadowsExplorerLogo.png`, the video's last
+frame, instead.
 
 Scene: `Manim/shadows_explorer_logo.py`, class `ShadowsExplorerLogo`. It is
 ShadowTracker's "F4 — Sheen" splash with an **SE** in the tile: a pen draws
@@ -27,7 +29,13 @@ Then re-encode to H.264 / yuv420p (Windows Media Foundation will not play
 other pixel formats reliably):
 
 ```
-ffmpeg -y -i <scratch folder>/videos/shadows_explorer_logo/1080p60/ShadowsExplorerLogo.mp4 -c:v libx264 -pix_fmt yuv420p -profile:v high -crf 18 -preset slow -r 60 -an -movflags +faststart resources/videos/ShadowsExplorerLogo.mp4
+ffmpeg -y -i <scratch folder>/videos/shadows_explorer_logo/1080p60/ShadowsExplorerLogo.mp4 -c:v libx264 -pix_fmt yuv420p -profile:v high -crf 18 -preset slow -r 60 -an -movflags +faststart shadows_explorer/resources/ShadowsExplorerLogo.mp4
+```
+
+Then refresh the fallback still from the last frame:
+
+```
+ffmpeg -y -sseof -0.5 -i shadows_explorer/resources/ShadowsExplorerLogo.mp4 -frames:v 1 -vf scale=960:540 -update 1 shadows_explorer/resources/ShadowsExplorerLogo.png
 ```
 
 Keep the `media/` output out of the repository. The font is the first
