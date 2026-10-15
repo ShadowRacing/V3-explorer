@@ -77,7 +77,12 @@ Requires Python 3.9 or newer.
 pip install -r requirements.txt   # Pygments is optional; it adds code highlighting
 python main.py                    # opens your home folder
 python main.py C:\Projects        # or start in a specific folder
+python main.py --no-splash        # skip the start-up video for this run
 ```
+
+The start-up video plays while the window loads; click it or press any key
+to skip it, or turn it off under Settings → Appearance. If the video cannot
+play, a still of the logo shows briefly instead.
 
 Or install it as a package, which adds a `shadows-explorer` command:
 
@@ -120,7 +125,7 @@ shadows-explorer                  # same as: python -m shadows_explorer
 main.py                     Starts the app from a source checkout
 pyproject.toml              Package metadata and the shadows-explorer command
 shadows_explorer/
-├── app.py                  Creates the QApplication and main window
+├── app.py                  Creates the QApplication, the splash and the main window
 ├── core/                   File-system logic, no widgets (unit tested)
 │   ├── archive.py          Zip/unzip, safe against archives escaping their folder
 │   ├── background.py       Runs slow jobs off the UI thread
@@ -142,6 +147,7 @@ shadows_explorer/
 │   └── utils.py            Paths, sizes, navigation history
 ├── ui/                     Windows, views and panes
 │   ├── main_window.py      The main window: navigation, tabs, file operations, search
+│   ├── splash.py           Start-up video, with a still when it cannot play
 │   ├── navigation_panel.py Sidebar with Favorites, Recent, locations and drives
 │   ├── breadcrumb_bar.py   Clickable, editable path bar
 │   ├── file_views.py       Folder views with drag and drop and in-place rename
@@ -155,9 +161,11 @@ shadows_explorer/
 │   ├── tags.py             Tag dots, the Tags menu and the tag dialog
 │   ├── command_palette.py  The Ctrl+Shift+P command bar
 │   └── dialogs/            Properties, settings, bulk rename, disk usage and duplicates dialogs
-└── theme/
-    ├── theme_manager.py    One stylesheet, a color palette per theme
-    └── icons.py            The app's own SVG icon set
+├── theme/
+│   ├── theme_manager.py    One stylesheet, a color palette per theme
+│   └── icons.py            The app's own SVG icon set
+└── resources/              Start-up video and its fallback still (see Manim/README.md)
+Manim/                      The Manim scene the start-up video is rendered from
 tests/                      pytest suite (runs without a display)
 ```
 

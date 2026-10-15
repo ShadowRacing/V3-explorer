@@ -2668,7 +2668,7 @@ class ModernExplorer(QMainWindow):
     def show_settings(self, page=None):
         """Show the settings dialog, optionally on a page ("Appearance", "Performance" or "About")."""
         if not self.settings_dialog:
-            self.settings_dialog = SettingsDialog(self.theme_manager, self.performance, self)
+            self.settings_dialog = SettingsDialog(self.theme_manager, self.performance, self, settings=self.settings)
             self.settings_dialog.performance_changed.connect(self.apply_performance)
             self.settings_dialog.clear_thumbnails_requested.connect(self._clear_thumbnails)
         if page:
